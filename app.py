@@ -49,10 +49,10 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Ты написал: {text}")
 
 def main():
-    # 1) HTTP-сервер в отдельном системном потоке
+    # 1) Запускаем FastAPI в отдельном системном потоке
     threading.Thread(target=run_api, daemon=True, name="uvicorn-thread").start()
 
-    # 2) Telegram-поллинг В ГЛАВНОМ потоке
+    # 2) В ГЛАВНОМ потоке запускаем Telegram-поллинг
     log.info("Telegram: building application...")
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
