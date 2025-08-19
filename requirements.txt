@@ -1,4 +1,1 @@
-fastapi
-uvicorn
-python-telegram-bot==21.6
-httpx
+
