@@ -3,4 +3,3 @@ fastapi
 uvicorn
 httpx
 openai>=1.35.0
-psycopg2-binary
