@@ -9,6 +9,14 @@
 - Логи в Postgres (таблица `chat_logs`)
 - Переключатель бота Включить/Выключить из Telegram: /admin или /on /off
 - Настройки хранятся в Postgres (таблица `settings`) — переживают перезапуск
+# GPTBot
+
+### Команды
+- /start — запуск
+- /help — помощь
+- /enable_images — включить картинки (только админ)
+- /disable_images — выключить картинки (только админ)
+- /images_status — статус картинок
 
 ## Переменные окружения (Railway → Variables)
 - TELEGRAM_BOT_TOKEN
