@@ -13,14 +13,8 @@ from telegram import (
     InlineKeyboardMarkup,
     InlineKeyboardButton,
 )
-from telegram.ext import (
-    Application,
-    ApplicationBuilder,
-    CommandHandler,
-    MessageHandler,
-    CallbackQueryHandler,
-    ContextTypes,
-    filters,
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 )
 
 # --------- Logging ----------
