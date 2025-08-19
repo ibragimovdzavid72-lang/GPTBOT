@@ -1,115 +1,92 @@
 # app.py
 import os
-import sys
-import json
 import logging
-from typing import Optional
+from typing import Any, Dict
 
 from fastapi import FastAPI, Request, HTTPException
-import uvicorn
+import httpx
 
-from telegram import Update
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    ContextTypes,
-    filters,
-)
-
-# ---------- Logging ----------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    stream=sys.stdout,
-)
+# --------- Config ---------
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("gptbot")
 
-# ---------- ENV ----------
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
-WEBHOOK_BASE = os.getenv("WEBHOOK_BASE", "").rstrip("/")
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "").strip()  # если пусто — без секрета
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "supersecret123456")  # на случай, если не задано
 
 if not TELEGRAM_BOT_TOKEN:
     raise RuntimeError("TELEGRAM_BOT_TOKEN is not set")
 
-# ---------- Telegram App ----------
-tg_app: Application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+TG_API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 
-# /start
-async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("✅ Бот запущен и работает!")
+# HTTP клиент (переиспользуем соединения)
+http = httpx.AsyncClient(timeout=15)
 
-# эхо
-async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = (update.message.text or "").strip()
-    if text:
-        await update.message.reply_text(f"Ты написал: {text}")
+# --------- App ---------
+app = FastAPI()
 
-tg_app.add_handler(CommandHandler("start", start_cmd))
-tg_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
 
-# ---------- FastAPI ----------
-api = FastAPI()
-
-@api.get("/health")
-def health():
+@app.get("/health")
+async def health():
     return {"ok": True}
 
-def webhook_path() -> str:
-    # /webhook или /webhook/<секрет>
-    return "/webhook" if not WEBHOOK_SECRET else f"/webhook/{WEBHOOK_SECRET}"
 
-@api.on_event("startup")
-async def on_startup():
-    # Инициализация и установка вебхука
-    await tg_app.initialize()
-    await tg_app.start()
+async def tg_send_message(chat_id: int, text: str, reply_markup: Dict[str, Any] | None = None):
+    payload: Dict[str, Any] = {"chat_id": chat_id, "text": text}
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+    r = await http.post(f"{TG_API}/sendMessage", json=payload)
+    if r.is_error:
+        log.error("sendMessage error %s: %s", r.status_code, r.text)
 
-    if not WEBHOOK_BASE:
-        log.warning("WEBHOOK_BASE не задан, вебхук не будет установлен.")
-        return
 
-    url = f"{WEBHOOK_BASE}{webhook_path()}"
-    await tg_app.bot.set_webhook(url)
-    log.info("Webhook установлен: %s", url)
+def default_keyboard() -> Dict[str, Any]:
+    # Простые “готовые” кнопки (Reply Keyboard)
+    return {
+        "keyboard": [
+            [{"text": "ℹ️ Помощь"}, {"text": "🖼️ Картинка"}],
+            [{"text": "🟢 Включить бота"}, {"text": "🔴 Выключить бота"}],
+        ],
+        "resize_keyboard": True,
+        "one_time_keyboard": False,
+    }
 
-@api.on_event("shutdown")
-async def on_shutdown():
-    try:
-        await tg_app.bot.delete_webhook(drop_pending_updates=True)
-        log.info("Webhook удалён")
-    except Exception as e:
-        log.warning("Не удалось удалить вебхук: %s", e)
-    await tg_app.stop()
-    await tg_app.shutdown()
 
-# ---------- Webhook endpoints ----------
-@api.post("/webhook")
-async def webhook_plain(request: Request):
-    if WEBHOOK_SECRET:
-        # Если секрет включён, этот путь не должен использоваться
-        raise HTTPException(status_code=404, detail="Not Found")
-    data = await request.json()
-    update = Update.de_json(data, tg_app.bot)  # PTB 21.6
-    await tg_app.process_update(update)
+@app.post("/webhook/{secret}")
+async def webhook(secret: str, request: Request):
+    # Проверяем секрет пути, чтобы посторонние не дергали наш эндпоинт
+    if secret != WEBHOOK_SECRET:
+        raise HTTPException(status_code=404)
+
+    update = await request.json()
+    log.debug("update: %s", update)
+
+    # Обработка обычных сообщений
+    if "message" in update:
+        msg = update["message"]
+        chat_id = msg["chat"]["id"]
+        text = msg.get("text", "") or ""
+
+        # Команды/кнопки
+        normalized = text.strip().lower()
+        if normalized in ("/start", "start"):
+            await tg_send_message(
+                chat_id,
+                "✅ Бот на Railway подключен и слушает вебхук!\nНапиши любой текст — я отвечу.",
+                reply_markup=default_keyboard(),
+            )
+        elif normalized in ("ℹ️ помощь", "/help", "help"):
+            await tg_send_message(
+                chat_id,
+                "Доступно:\n• /start — проверить работу\n• Напиши текст — я его повторю\n• “🖼️ Картинка” — заготовка под генерацию",
+                reply_markup=default_keyboard(),
+            )
+        elif normalized in ("🖼️ картинка", "картинка"):
+            await tg_send_message(chat_id, "Заготовка для генерации изображений. (Сейчас просто ответ.)")
+        elif normalized in ("🟢 включить бота", "включить бота", "🔴 выключить бота", "выключить бота"):
+            await tg_send_message(chat_id, "Ок, принял. (Здесь можно привязать реальный on/off флаг.)")
+        else:
+            # эхо-ответ
+            await tg_send_message(chat_id, f"Я получил: {text}", reply_markup=default_keyboard())
+
+    # Можно расширить: callback_query, edited_message и т.д.
     return {"ok": True}
-
-@api.post("/webhook/{secret}")
-async def webhook_secret(request: Request, secret: Optional[str] = None):
-    if not WEBHOOK_SECRET or secret != WEBHOOK_SECRET:
-        raise HTTPException(status_code=404, detail="Not Found")
-    data = await request.json()
-    update = Update.de_json(data, tg_app.bot)
-    await tg_app.process_update(update)
-    return {"ok": True}
-
-# ---------- Local run (Railway запускает через python app.py) ----------
-def main():
-    port = int(os.environ.get("PORT", "8000"))
-    log.info("HTTP: starting Uvicorn on 0.0.0.0:%d", port)
-    uvicorn.run(api, host="0.0.0.0", port=port, log_level="info")
-
-if __name__ == "__main__":
-    main()
