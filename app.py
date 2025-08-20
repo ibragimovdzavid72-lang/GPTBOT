@@ -6,13 +6,18 @@ import logging
 from typing import Any, Dict, Optional, List, Tuple
 
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone, date
+from datetime import date
 
 import httpx
-import asyncpg
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse, PlainTextResponse
 from openai import AsyncOpenAI
+
+# --- необязательная БД: подключим динамически, чтобы без неё не падать
+try:
+    import asyncpg  # type: ignore
+except Exception:  # если пакет не установлен — работаем без БД
+    asyncpg = None  # type: ignore
 
 # ---------------- LOGGING ----------------
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -22,39 +27,43 @@ log = logging.getLogger("gptbot")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "supersecret123456")
 TELEGRAM_WEBHOOK_TOKEN = os.getenv("TELEGRAM_WEBHOOK_TOKEN", "")
-DATABASE_URL = os.getenv("DATABASE_URL")
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
 OPENAI_IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "dall-e-3")
 FALLBACK_MODEL = os.getenv("FALLBACK_MODEL", "gpt-4o-mini")
 
+DATABASE_URL = os.getenv("DATABASE_URL")  # МОЖЕТ БЫТЬ ПУСТО/НЕПРАВИЛЬНО — тогда работаем без БД
+
 FREE_MSGS_PER_DAY = int(os.getenv("FREE_MSGS_PER_DAY", "20"))
 FREE_IMAGES_PER_DAY = int(os.getenv("FREE_IMAGES_PER_DAY", "5"))
 
 ADMIN_IDS_ENV = os.getenv("ADMIN_IDS", "")
 ADMIN_IDS: List[int] = [int(x) for x in ADMIN_IDS_ENV.replace(" ", "").split(",") if x.isdigit()]
-# ваш ID как дефолт
 if 1752390166 not in ADMIN_IDS:
-    ADMIN_IDS.append(1752390166)
+    ADMIN_IDS.append(1752390166)  # ваш ID по умолчанию
 
 if not TELEGRAM_BOT_TOKEN:
     raise RuntimeError("TELEGRAM_BOT_TOKEN is not set")
 if not OPENAI_API_KEY:
     raise RuntimeError("OPENAI_API_KEY is not set")
-if not DATABASE_URL:
-    raise RuntimeError("DATABASE_URL is not set")
 
 TG_API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 
 # ---------------- GLOBALS ----------------
 http: Optional[httpx.AsyncClient] = None
-pg: Optional[asyncpg.Pool] = None
 client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+pg_pool = None  # type: ignore
+DB_ENABLED = False  # переключатель: включим после успешного коннекта
+
 BOT_ENABLED = True
 CHAT_MODES: Dict[int, str] = {}  # chat_id -> "chat"|"image"
 
-# ---------------- DB INIT ----------------
+# ---- in-memory (когда БД нет): простая память и лимиты на процесс
+MEM_HISTORY: Dict[int, List[Tuple[str, str]]] = {}         # chat_id -> [(role, content), ...]
+MEM_USAGE: Dict[Tuple[int, date], Dict[str, int]] = {}     # (user_id, date) -> {"text": n, "image": m}
+
+# ---------------- SQL ----------------
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS users (
   user_id BIGINT PRIMARY KEY,
@@ -101,93 +110,52 @@ CREATE TABLE IF NOT EXISTS analytics (
 );
 """
 
-async def db_init():
-    assert pg is not None
-    async with pg.acquire() as conn:
-        await conn.execute(SCHEMA_SQL)
+# ---------------- DB HELPERS ----------------
+async def db_safe_connect(url: Optional[str]):
+    """Пытаемся подключиться к БД. Любая ошибка — работаем без БД (не падаем)."""
+    global pg_pool, DB_ENABLED
+    if not asyncpg or not url:
+        log.warning("DB disabled: asyncpg not installed or DATABASE_URL is empty")
+        DB_ENABLED = False
+        return
+    try:
+        # Railway даёт URL вида:
+        # postgresql://USER:PASSWORD@HOST:PORT/DB?sslmode=require
+        # Если у вас остались заглушки (USER:PASSWORD@HOST:PORT/DBNAME) — будет ошибка parse.
+        pg_pool = await asyncpg.create_pool(dsn=url, min_size=1, max_size=5)  # безопасные значения
+        async with pg_pool.acquire() as conn:
+            await conn.execute(SCHEMA_SQL)
+        DB_ENABLED = True
+        log.info("DB enabled and ready")
+    except Exception as e:
+        DB_ENABLED = False
+        pg_pool = None
+        log.error("DB connect failed, running WITHOUT database: %s", e)
 
-async def get_or_create_user(user_id: int) -> None:
-    assert pg is not None
-    async with pg.acquire() as conn:
-        await conn.execute(
-            """INSERT INTO users(user_id, is_admin)
-               VALUES($1, $2)
-               ON CONFLICT (user_id) DO NOTHING""",
-            user_id, user_id in ADMIN_IDS
-        )
+async def db_exec(query: str, *args):
+    if not DB_ENABLED or not pg_pool:
+        return
+    async with pg_pool.acquire() as conn:
+        await conn.execute(query, *args)
 
-async def touch_session(chat_id: int, user_id: int) -> None:
-    assert pg is not None
-    async with pg.acquire() as conn:
-        await conn.execute(
-            """INSERT INTO sessions(chat_id, user_id, updated_at)
-               VALUES($1,$2,NOW())
-               ON CONFLICT (chat_id) DO UPDATE SET updated_at=EXCLUDED.updated_at, user_id=EXCLUDED.user_id""",
-            chat_id, user_id
-        )
-
-async def add_message(chat_id: int, user_id: int, role: str, content: str):
-    assert pg is not None
-    async with pg.acquire() as conn:
-        await conn.execute(
-            "INSERT INTO messages(chat_id,user_id,role,content) VALUES($1,$2,$3,$4)",
-            chat_id, user_id, role, content
-        )
-
-async def fetch_history(chat_id: int, limit: int = 12) -> List[Tuple[str, str]]:
-    """Return last N messages as list of (role, content) from newest->oldest reversed to oldest->newest"""
-    assert pg is not None
-    async with pg.acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT role, content FROM messages WHERE chat_id=$1 ORDER BY created_at DESC LIMIT $2",
-            chat_id, limit
-        )
-    return list(reversed([(r["role"], r["content"]) for r in rows]))
-
-async def get_usage_today(user_id: int) -> Tuple[int, int]:
-    assert pg is not None
-    d = date.today()
-    async with pg.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT text_count, image_count FROM usage_daily WHERE user_id=$1 AND the_date=$2",
-            user_id, d
-        )
-        if row:
-            return int(row["text_count"]), int(row["image_count"])
-        else:
-            await conn.execute("INSERT INTO usage_daily(user_id, the_date) VALUES($1,$2)", user_id, d)
-            return 0, 0
-
-async def inc_usage(user_id: int, kind: str):
-    assert pg is not None
-    d = date.today()
-    col = "text_count" if kind == "chat" else "image_count"
-    async with pg.acquire() as conn:
-        await conn.execute(
-            f"UPDATE usage_daily SET {col} = {col} + 1 WHERE user_id=$1 AND the_date=$2",
-            user_id, d
-        )
-
-async def write_analytics(user_id: int, chat_id: int, kind: str, model: str, duration_ms: int, status: str, err: Optional[str]):
-    assert pg is not None
-    async with pg.acquire() as conn:
-        await conn.execute(
-            "INSERT INTO analytics(user_id,chat_id,kind,model,duration_ms,status,err) VALUES($1,$2,$3,$4,$5,$6,$7)",
-            user_id, chat_id, kind, model, duration_ms, status, err
-        )
+async def db_fetch(query: str, *args):
+    if not DB_ENABLED or not pg_pool:
+        return []
+    async with pg_pool.acquire() as conn:
+        return await conn.fetch(query, *args)
 
 # ---------------- LIFESPAN ----------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global http, pg
+    global http
     http = httpx.AsyncClient(timeout=12.0)
-    pg = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
-    await db_init()
+    await db_safe_connect(DATABASE_URL)
     try:
         yield
     finally:
         await http.aclose()
-        await pg.close()
+        if DB_ENABLED and pg_pool:
+            await pg_pool.close()
 
 app = FastAPI(lifespan=lifespan)
 
@@ -238,89 +206,126 @@ async def tg_send_photo(chat_id: int, url: str, caption: str = ""):
 
 # ---------------- MODERATION ----------------
 async def moderate(text: str) -> bool:
-    """Return True if text is allowed, False if flagged"""
     try:
         res = await client.moderations.create(model="omni-moderation-latest", input=text)
         return not bool(res.results[0].flagged)
     except Exception as e:
         log.warning("moderation failed: %s", e)
-        # В случае сбоя модерации — пропускаем (или верните False, если хотите строгий режим)
-        return True
+        return True  # не роняем UX при сбое модерации
 
-# ---------------- OPENAI LOGIC ----------------
+# ---------------- USAGE & HISTORY (DB/Memory) ----------------
+async def usage_get_today(user_id: int) -> Tuple[int, int]:
+    today = date.today()
+    if DB_ENABLED:
+        row = None
+        rows = await db_fetch("SELECT text_count, image_count FROM usage_daily WHERE user_id=$1 AND the_date=$2", user_id, today)
+        if rows:
+            row = rows[0]
+        else:
+            await db_exec("INSERT INTO usage_daily(user_id, the_date) VALUES($1,$2)", user_id, today)
+            row = {"text_count": 0, "image_count": 0}
+        return int(row["text_count"]), int(row["image_count"])
+    # memory
+    d = MEM_USAGE.setdefault((user_id, today), {"text": 0, "image": 0})
+    return d["text"], d["image"]
+
+async def usage_inc(user_id: int, kind: str):
+    today = date.today()
+    if DB_ENABLED:
+        col = "text_count" if kind == "chat" else "image_count"
+        await db_exec(f"UPDATE usage_daily SET {col} = {col} + 1 WHERE user_id=$1 AND the_date=$2", user_id, today)
+        return
+    d = MEM_USAGE.setdefault((user_id, today), {"text": 0, "image": 0})
+    if kind == "chat":
+        d["text"] += 1
+    else:
+        d["image"] += 1
+
+async def history_fetch(chat_id: int, limit: int = 12) -> List[Tuple[str, str]]:
+    if DB_ENABLED:
+        rows = await db_fetch(
+            "SELECT role, content FROM messages WHERE chat_id=$1 ORDER BY created_at DESC LIMIT $2",
+            chat_id, limit
+        )
+        return list(reversed([(r["role"], r["content"]) for r in rows]))
+    return MEM_HISTORY.get(chat_id, [])[-limit:]
+
+async def history_add(chat_id: int, user_id: int, role: str, content: str):
+    if DB_ENABLED:
+        await db_exec("INSERT INTO messages(chat_id,user_id,role,content) VALUES($1,$2,$3,$4)", chat_id, user_id, role, content)
+    else:
+        MEM_HISTORY.setdefault(chat_id, []).append((role, content))
+
+async def analytics_write(user_id: int, chat_id: int, kind: str, model: str, duration_ms: int, status: str, err: Optional[str]):
+    if DB_ENABLED:
+        await db_exec(
+            "INSERT INTO analytics(user_id,chat_id,kind,model,duration_ms,status,err) VALUES($1,$2,$3,$4,$5,$6,$7)",
+            user_id, chat_id, kind, model, duration_ms, status, err
+        )
+
+# ---------------- OPENAI ----------------
 async def do_chat(user_id: int, chat_id: int, text: str):
     t0 = time.perf_counter()
     model_used = OPENAI_MODEL
     try:
-        # лимиты
-        txt_count, _ = await get_usage_today(user_id)
-        if user_id not in ADMIN_IDS and txt_count >= FREE_MSGS_PER_DAY:
-            await tg_send_message(chat_id, f"⛔ Исчерпан дневной лимит сообщений ({FREE_MSGS_PER_DAY}). Попробуйте завтра.")
+        txt, _ = await usage_get_today(user_id)
+        if user_id not in ADMIN_IDS and txt >= FREE_MSGS_PER_DAY:
+            await tg_send_message(chat_id, f"⛔ Лимит сообщений на сегодня: {FREE_MSGS_PER_DAY}.")
             return
 
-        # модерация входа
         if not await moderate(text):
             await tg_send_message(chat_id, "⚠️ Сообщение отклонено модерацией.")
             return
 
-        # контекст
-        history = await fetch_history(chat_id, limit=12)
+        history = await history_fetch(chat_id, 12)
         messages = [{"role": "system", "content": "Вы полезный и вежливый ассистент. Отвечайте кратко и по делу."}]
         for role, content in history:
             messages.append({"role": role, "content": content})
         messages.append({"role": "user", "content": text})
 
-        # основной вызов
         try:
             resp = await client.chat.completions.create(model=model_used, messages=messages, temperature=0.7, max_tokens=800)
-        except Exception as e_first:
-            # фоллбэк на запасную модель
-            log.warning("primary model failed, trying fallback: %s", e_first)
+        except Exception as e1:
+            log.warning("Primary model failed (%s). Try fallback.", e1)
             model_used = FALLBACK_MODEL
             resp = await client.chat.completions.create(model=model_used, messages=messages, temperature=0.7, max_tokens=800)
 
         answer = (resp.choices[0].message.content or "").strip() or "⚠️ Пустой ответ."
-        # модерация выхода (мягкая)
         if not await moderate(answer):
             answer = "⚠️ Ответ скрыт модерацией."
 
-        # сохранить диалог
-        await add_message(chat_id, user_id, "user", text)
-        await add_message(chat_id, user_id, "assistant", answer)
-        await inc_usage(user_id, "chat")
+        await history_add(chat_id, user_id, "user", text)
+        await history_add(chat_id, user_id, "assistant", answer)
+        await usage_inc(user_id, "chat")
 
         await tg_send_message(chat_id, answer)
 
-        dt = int((time.perf_counter() - t0) * 1000)
-        await write_analytics(user_id, chat_id, "chat", model_used, dt, "ok", None)
+        await analytics_write(user_id, chat_id, "chat", model_used, int((time.perf_counter() - t0) * 1000), "ok", None)
     except Exception as e:
-        dt = int((time.perf_counter() - t0) * 1000)
-        await write_analytics(user_id, chat_id, "chat", model_used, dt, "err", str(e))
+        await analytics_write(user_id, chat_id, "chat", model_used, int((time.perf_counter() - t0) * 1000), "err", str(e))
         log.exception("chat failed")
         await tg_send_message(chat_id, f"❌ Ошибка ИИ: <code>{e}</code>")
 
 async def do_image(user_id: int, chat_id: int, prompt: str):
     t0 = time.perf_counter()
     try:
-        _, img_count = await get_usage_today(user_id)
-        if user_id not in ADMIN_IDS and img_count >= FREE_IMAGES_PER_DAY:
-            await tg_send_message(chat_id, f"⛔ Лимит изображений на сегодня исчерпан ({FREE_IMAGES_PER_DAY}).")
+        _, img = await usage_get_today(user_id)
+        if user_id not in ADMIN_IDS and img >= FREE_IMAGES_PER_DAY:
+            await tg_send_message(chat_id, f"⛔ Лимит изображений на сегодня: {FREE_IMAGES_PER_DAY}.")
             return
 
         if not await moderate(prompt):
-            await tg_send_message(chat_id, "⚠️ Описание изображения отклонено модерацией.")
+            await tg_send_message(chat_id, "⚠️ Описание отклонено модерацией.")
             return
 
         resp = await client.images.generate(model=OPENAI_IMAGE_MODEL, prompt=prompt, size="1024x1024")
         url = resp.data[0].url
         await tg_send_photo(chat_id, url, caption=f"🖼 {prompt}")
-        await inc_usage(user_id, "image")
+        await usage_inc(user_id, "image")
 
-        dt = int((time.perf_counter() - t0) * 1000)
-        await write_analytics(user_id, chat_id, "image", OPENAI_IMAGE_MODEL, dt, "ok", None)
+        await analytics_write(user_id, chat_id, "image", OPENAI_IMAGE_MODEL, int((time.perf_counter() - t0) * 1000), "ok", None)
     except Exception as e:
-        dt = int((time.perf_counter() - t0) * 1000)
-        await write_analytics(user_id, chat_id, "image", OPENAI_IMAGE_MODEL, dt, "err", str(e))
+        await analytics_write(user_id, chat_id, "image", OPENAI_IMAGE_MODEL, int((time.perf_counter() - t0) * 1000), "err", str(e))
         log.exception("image failed")
         await tg_send_message(chat_id, f"❌ Ошибка генерации изображения: <code>{e}</code>")
 
@@ -328,16 +333,8 @@ async def do_image(user_id: int, chat_id: int, prompt: str):
 async def handle_update(update: Dict[str, Any]):
     global BOT_ENABLED
     try:
-        # Telegram может прислать разные типы апдейтов — обрабатываем только сообщения и payment-хуки/inline можно добавить ниже
         msg = update.get("message") or update.get("edited_message")
         if not msg:
-            # платежи/инвойсы
-            pcq = update.get("pre_checkout_query")
-            if pcq:
-                # здесь можно валидировать заказ; пока подтверждаем всегда
-                await answer_pre_checkout_query(pcq["id"], ok=True)
-            sp = (update.get("message") or {}).get("successful_payment")
-            # здесь вы бы выставили тариф пользователю sp["telegram_payment_charge_id"]
             return
 
         chat_id = msg["chat"]["id"]
@@ -345,13 +342,9 @@ async def handle_update(update: Dict[str, Any]):
         if not user_id:
             return
 
-        await get_or_create_user(user_id)
-        await touch_session(chat_id, user_id)
-
         text = (msg.get("text") or "").strip()
         low = text.casefold()
 
-        # нормализация команд
         cmd = ""
         if low.startswith("/"):
             first = low.split()[0]
@@ -361,10 +354,10 @@ async def handle_update(update: Dict[str, Any]):
 
         # диагностика
         if cmd == "/whoami":
-            await tg_send_message(chat_id, f"user_id: <code>{user_id}</code>\nchat_id: <code>{chat_id}</code>\nadmins: <code>{ADMIN_IDS}</code>\ncmd: <code>{cmd}</code>")
+            await tg_send_message(chat_id, f"user_id: <code>{user_id}</code>\nchat_id: <code>{chat_id}</code>\nadmins: <code>{ADMIN_IDS}</code>\nDB_ENABLED: <code>{DB_ENABLED}</code>")
             return
 
-        # если бот выключен
+        # выключение бота
         if not BOT_ENABLED and not is_admin:
             await tg_send_message(chat_id, "⏸ Бот на паузе. Обратитесь к администратору.")
             return
@@ -376,7 +369,7 @@ async def handle_update(update: Dict[str, Any]):
                 chat_id,
                 "👋 <b>Добро пожаловать в GPTBOT!</b>\n\n"
                 "🟢 Доступные режимы:\n"
-                "• <b>Чат с GPT</b> — отвечаю как ИИ\n"
+                "• <b>Чат с GPT</b> — диалог (с памятью, если БД включена)\n"
                 "• <b>Создать изображение</b> — рисую по описанию\n\n"
                 "Выберите режим кнопкой или просто напишите сообщение.",
                 reply_markup=kb_main(is_admin=is_admin),
@@ -387,9 +380,9 @@ async def handle_update(update: Dict[str, Any]):
             await tg_send_message(
                 chat_id,
                 "ℹ️ <b>Справка</b>\n"
-                "• «💬 Чат с GPT» — диалог с контекстом\n"
-                "• «🎨 Создать изображение» — генерация картинки\n"
-                "• Команды: <code>/image ваш_текст</code>, <code>/whoami</code>\n"
+                "• «💬 Чат с GPT» — контекст сохраняется, если настроена БД\n"
+                "• «🎨 Создать изображение» — генерирую картинку\n"
+                "• Команды: <code>/image текст</code>, <code>/whoami</code>\n"
                 "• Админ: <code>/admin</code>, <code>/on</code>, <code>/off</code>, <code>/stats</code>",
             )
             return
@@ -399,7 +392,8 @@ async def handle_update(update: Dict[str, Any]):
                 await tg_send_message(chat_id, f"🚫 Только для администратора. (вижу user_id=<code>{user_id}</code>)")
                 return
             status = "🟢 ВКЛЮЧЕН" if BOT_ENABLED else "🔴 ВЫКЛЮЧЕН"
-            await tg_send_message(chat_id, f"🛠 <b>Админ-панель</b>\nСтатус: {status}\nКоманды: /on /off /stats", reply_markup=kb_admin())
+            dbs = "🟢" if DB_ENABLED else "🔴"
+            await tg_send_message(chat_id, f"🛠 <b>Админ-панель</b>\nСтатус бота: {status}\nБаза данных: {dbs}\nКоманды: /on /off /stats", reply_markup=kb_admin())
             return
 
         if cmd == "/on" or low in ("🟢 включить бот", "включить бота"):
@@ -422,8 +416,8 @@ async def handle_update(update: Dict[str, Any]):
             if not is_admin:
                 await tg_send_message(chat_id, "🚫 Нет доступа.")
                 return
-            txt, img = await get_usage_today(user_id)
-            await tg_send_message(chat_id, f"📊 Статистика (сегодня):\n— Ваши тексты: <b>{txt}</b> / {FREE_MSGS_PER_DAY}\n— Ваши изображения: <b>{img}</b> / {FREE_IMAGES_PER_DAY}")
+            txt, img = await usage_get_today(user_id)
+            await tg_send_message(chat_id, f"📊 Статистика (сегодня):\n— Тексты: <b>{txt}</b> / {FREE_MSGS_PER_DAY}\n— Картинки: <b>{img}</b> / {FREE_IMAGES_PER_DAY}\nБаза данных: {'✅' if DB_ENABLED else '❌'}")
             return
 
         if low == "⬅️ назад":
@@ -432,7 +426,7 @@ async def handle_update(update: Dict[str, Any]):
 
         if low == "💬 чат с gpt":
             CHAT_MODES[chat_id] = "chat"
-            await tg_send_message(chat_id, "🗣 Режим: Чат с GPT (с памятью)")
+            await tg_send_message(chat_id, "🗣 Режим: Чат с GPT")
             return
 
         if low == "🎨 создать изображение":
@@ -449,7 +443,7 @@ async def handle_update(update: Dict[str, Any]):
             await do_image(user_id, chat_id, prompt)
             return
 
-        # по текущему режиму
+        # по режиму
         mode = CHAT_MODES.get(chat_id, "chat")
         if mode == "image":
             await do_image(user_id, chat_id, text)
@@ -459,17 +453,6 @@ async def handle_update(update: Dict[str, Any]):
     except Exception as e:
         log.exception("handle_update failed: %s", e)
 
-# ---------------- PAYMENTS (STUBS) ----------------
-async def answer_pre_checkout_query(pre_checkout_query_id: str, ok: bool, error_message: Optional[str] = None):
-    assert http is not None
-    data: Dict[str, Any] = {"pre_checkout_query_id": pre_checkout_query_id, "ok": ok}
-    if not ok and error_message:
-        data["error_message"] = error_message
-    try:
-        await http.post(f"{TG_API}/answerPreCheckoutQuery", json=data)
-    except Exception:
-        log.exception("answerPreCheckoutQuery failed")
-
 # ---------------- ROUTES ----------------
 @app.get("/")
 async def root():
@@ -477,7 +460,7 @@ async def root():
 
 @app.get("/health")
 async def health():
-    return {"ok": True, "enabled": BOT_ENABLED, "admins": ADMIN_IDS}
+    return {"ok": True, "enabled": BOT_ENABLED, "db": DB_ENABLED, "admins": ADMIN_IDS}
 
 @app.post("/webhook/{secret}")
 async def webhook(secret: str, request: Request):
@@ -486,11 +469,13 @@ async def webhook(secret: str, request: Request):
     if TELEGRAM_WEBHOOK_TOKEN:
         if request.headers.get("x-telegram-bot-api-secret-token") != TELEGRAM_WEBHOOK_TOKEN:
             raise HTTPException(status_code=403)
+
     try:
         raw = await request.body()
         update = json.loads(raw.decode("utf-8")) if raw else {}
     except Exception:
         log.warning("Non-JSON update")
         return JSONResponse({"ok": True})
+
     asyncio.create_task(handle_update(update))
     return JSONResponse({"ok": True})
