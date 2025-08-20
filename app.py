@@ -1,21 +1,34 @@
 import os
 import logging
 import asyncio
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from contextlib import asynccontextmanager
 import httpx
 from openai import AsyncOpenAI
 
-# --------- Config ---------
+# ---------- LOGGING ----------
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("gptbot")
 
+# ---------- ENV ----------
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "supersecret123456")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+# Chat & Image models
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")          # чат
+OPENAI_IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "dall-e-3")  # картинки
+
+# Админы: можно задать ENV ADMIN_IDS="111,222", а также ниже задать дефолт (твои ID)
+ADMIN_IDS_ENV = os.getenv("ADMIN_IDS", "")
+ADMIN_IDS: List[int] = [int(x) for x in ADMIN_IDS_ENV.replace(" ", "").split(",") if x.isdigit()]
+
+# добавим твой ID как дефолт/резерв
+DEFAULT_ADMIN_IDS = {1752390166}
+ADMIN_IDS = list(set(ADMIN_IDS) | DEFAULT_ADMIN_IDS)
 
 if not TELEGRAM_BOT_TOKEN:
     raise RuntimeError("TELEGRAM_BOT_TOKEN is not set")
@@ -23,17 +36,18 @@ if not OPENAI_API_KEY:
     raise RuntimeError("OPENAI_API_KEY is not set")
 
 TG_API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
-
-# OpenAI client
 client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
-# Глобальный клиент создаём/закрываем через lifespan
+# ---------- GLOBAL STATE ----------
 http: Optional[httpx.AsyncClient] = None
+BOT_ENABLED = True
+CHAT_MODES: Dict[int, str] = {}  # chat_id -> "chat" | "image"
 
+# ---------- LIFESPAN ----------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global http
-    http = httpx.AsyncClient(timeout=15.0)
+    http = httpx.AsyncClient(timeout=12.0)
     try:
         yield
     finally:
@@ -41,22 +55,15 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-# --------- State ---------
-BOT_ENABLED = True
-CHAT_MODES: Dict[int, str] = {}  # chat_id -> "chat" | "image"
-
-# Админ ID (ВАШ ID)
-ADMIN_IDS = {1752390166}
-
-# --------- Keyboards ---------
+# ---------- KEYBOARDS ----------
 def kb_main(is_admin: bool = False) -> Dict[str, Any]:
-    kb = [
+    rows = [
         [{"text": "💬 Чат с GPT"}, {"text": "🎨 Создать изображение"}],
         [{"text": "ℹ️ Помощь"}],
     ]
     if is_admin:
-        kb.append([{"text": "🛠 Админ-панель"}])
-    return {"keyboard": kb, "resize_keyboard": True}
+        rows.append([{"text": "🛠 Админ-панель"}])
+    return {"keyboard": rows, "resize_keyboard": True}
 
 def kb_admin() -> Dict[str, Any]:
     return {
@@ -67,7 +74,7 @@ def kb_admin() -> Dict[str, Any]:
         "resize_keyboard": True,
     }
 
-# --------- Helpers ---------
+# ---------- TG HELPERS ----------
 async def tg_send_message(chat_id: int, text: str, reply_markup: Dict[str, Any] | None = None):
     assert http is not None
     payload: Dict[str, Any] = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
@@ -82,43 +89,44 @@ async def tg_send_message(chat_id: int, text: str, reply_markup: Dict[str, Any] 
 
 async def tg_send_photo(chat_id: int, photo_url: str, caption: str = ""):
     assert http is not None
-    payload: Dict[str, Any] = {"chat_id": chat_id, "photo": photo_url}
+    data: Dict[str, Any] = {"chat_id": chat_id, "photo": photo_url}
     if caption:
-        payload["caption"] = caption
+        data["caption"] = caption
+        data["parse_mode"] = "HTML"
     try:
-        r = await http.post(f"{TG_API}/sendPhoto", data=payload)
+        r = await http.post(f"{TG_API}/sendPhoto", data=data)
         if r.is_error:
             log.error("sendPhoto %s: %s", r.status_code, r.text)
-    except Exception as e:
-        log.exception("sendPhoto failed: %s", e)
+    except Exception:
+        log.exception("sendPhoto failed")
 
-# --------- AI Logic ---------
+# ---------- OPENAI ----------
 async def do_chat(chat_id: int, text: str):
     try:
         resp = await client.chat.completions.create(
-            model="gpt-4o",
+            model=OPENAI_MODEL,
             messages=[{"role": "user", "content": text}],
         )
-        reply = resp.choices[0].message.content
-        await tg_send_message(chat_id, reply or "⚠️ Пустой ответ.")
+        out = (resp.choices[0].message.content or "").strip() or "⚠️ Пустой ответ."
+        await tg_send_message(chat_id, out)
     except Exception as e:
-        log.exception("chat failed: %s", e)
+        log.exception("chat failed")
         await tg_send_message(chat_id, f"❌ Ошибка ИИ: {e}")
 
 async def do_image(chat_id: int, prompt: str):
     try:
         resp = await client.images.generate(
-            model="dall-e-3",
+            model=OPENAI_IMAGE_MODEL,
             prompt=prompt,
             size="1024x1024",
         )
         url = resp.data[0].url
         await tg_send_photo(chat_id, url, caption=f"🖼 {prompt}")
     except Exception as e:
-        log.exception("image failed: %s", e)
+        log.exception("image failed")
         await tg_send_message(chat_id, f"❌ Ошибка генерации изображения: {e}")
 
-# --------- Main Logic ---------
+# ---------- HANDLER ----------
 async def handle_update(update: Dict[str, Any]):
     global BOT_ENABLED
     try:
@@ -127,23 +135,29 @@ async def handle_update(update: Dict[str, Any]):
             return
 
         chat_id = msg["chat"]["id"]
+        # В некоторых клиентах ключ может называться "from" (зарезервированное слово — но это dict-ключ, все ок)
         user_id = (msg.get("from") or {}).get("id")
         text = (msg.get("text") or "").strip()
         low = text.casefold()
 
-        # Нормализуем команду: /cmd@botname -> /cmd
+        # Нормализация команды: "/admin@BotName arg" -> "/admin"
         cmd = ""
         if low.startswith("/"):
-            first = low.split()[0]          # "/admin@MyBot"
+            first = low.split()[0]          # "/admin@BotName"
             cmd = first.split("@", 1)[0]    # "/admin"
 
-        is_admin = bool(user_id and user_id in ADMIN_IDS)
+        is_admin = bool(user_id and int(user_id) in ADMIN_IDS)
 
-        # === Диагностика ===
+        # Диагностика
         if cmd == "/whoami":
             await tg_send_message(
                 chat_id,
-                f"user_id: <code>{user_id}</code>\nchat_id: <code>{chat_id}</code>\nadmins: <code>{list(ADMIN_IDS)}</code>"
+                "🔎 Диагностика\n"
+                f"user_id: <code>{user_id}</code>\n"
+                f"chat_id: <code>{chat_id}</code>\n"
+                f"admins: <code>{ADMIN_IDS}</code>\n"
+                f"cmd: <code>{cmd}</code>\n"
+                f"text: <code>{text}</code>"
             )
             return
 
@@ -152,7 +166,7 @@ async def handle_update(update: Dict[str, Any]):
             await tg_send_message(chat_id, "⏸ Бот на паузе. Обратитесь к администратору.")
             return
 
-        # --- Команды ---
+        # ----- Команды -----
         if cmd in ("/start", "start"):
             CHAT_MODES[chat_id] = "chat"
             await tg_send_message(
@@ -177,13 +191,13 @@ async def handle_update(update: Dict[str, Any]):
             )
             return
 
-        # --- Админ-панель ---
+        # ----- Админка -----
         if cmd == "/admin" or low == "🛠 админ-панель":
             if not is_admin:
                 await tg_send_message(
                     chat_id,
                     "🚫 Только для администратора.\n"
-                    f"(ваш user_id: <code>{user_id}</code>)"
+                    f"(Я вижу user_id=<code>{user_id}</code>. Админы: <code>{ADMIN_IDS}</code>)"
                 )
                 return
             status = "🟢 ВКЛЮЧЕН" if BOT_ENABLED else "🔴 ВЫКЛЮЧЕН"
@@ -214,7 +228,7 @@ async def handle_update(update: Dict[str, Any]):
             await tg_send_message(chat_id, "🔙 Возвращаемся в меню.", reply_markup=kb_main(is_admin=is_admin))
             return
 
-        # --- Переключение режимов ---
+        # ----- Переключение режимов -----
         if low == "💬 чат с gpt":
             CHAT_MODES[chat_id] = "chat"
             await tg_send_message(chat_id, "🗣 Режим: Чат с GPT")
@@ -225,16 +239,17 @@ async def handle_update(update: Dict[str, Any]):
             await tg_send_message(chat_id, "🖼 Режим: Изображение. Напишите описание.")
             return
 
+        # ----- /image -----
         if cmd == "/image" or low.startswith("/image "):
-            prompt = text.split(maxsplit=1)
-            prompt = prompt[1] if len(prompt) > 1 else ""
+            parts = text.split(maxsplit=1)
+            prompt = parts[1] if len(parts) > 1 else ""
             if not prompt:
                 await tg_send_message(chat_id, "📸 Пример: /image закат над морем")
                 return
             await do_image(chat_id, prompt)
             return
 
-        # --- В зависимости от режима ---
+        # ----- По режиму -----
         mode = CHAT_MODES.get(chat_id, "chat")
         if mode == "image":
             await do_image(chat_id, text)
@@ -244,19 +259,25 @@ async def handle_update(update: Dict[str, Any]):
     except Exception as e:
         log.exception("handle_update failed: %s", e)
 
-# --------- Routes ---------
+# ---------- ROUTES ----------
+@app.get("/")
+async def root():
+    return PlainTextResponse("OK")
+
 @app.get("/health")
 async def health():
-    return {"ok": True}
+    return {"ok": True, "enabled": BOT_ENABLED, "admins": ADMIN_IDS}
 
 @app.post("/webhook/{secret}")
 async def webhook(secret: str, request: Request):
     if secret != WEBHOOK_SECRET:
         raise HTTPException(status_code=404)
+
     try:
         update = await request.json()
     except Exception:
         log.warning("Non-JSON update")
         return JSONResponse({"ok": True})
+
     asyncio.create_task(handle_update(update))
     return JSONResponse({"ok": True})
