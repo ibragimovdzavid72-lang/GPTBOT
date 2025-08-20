@@ -4,50 +4,55 @@ import json
 import base64
 import asyncio
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 
 import httpx
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse, PlainTextResponse
 
-# ==================  CONFIG  ==================
+# ============== LOGGING & CONFIG ==============
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("gptbot")
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
-TELEGRAM_WEBHOOK_TOKEN = os.getenv("TELEGRAM_WEBHOOK_TOKEN")  # опционально
+# ---- ВСТАВЬ СВОИ ЗНАЧЕНИЯ ИЛИ ЗАДАЙ В RAILWAY VARIABLES ----
+TELEGRAM_BOT_TOKEN   = os.getenv("TELEGRAM_BOT_TOKEN",   "PASTE_TELEGRAM_BOT_TOKEN_HERE")
+WEBHOOK_SECRET       = os.getenv("WEBHOOK_SECRET",       "supersecret123456")
+TELEGRAM_WEBHOOK_TOKEN = os.getenv("TELEGRAM_WEBHOOK_TOKEN", "")  # можно оставить пустым
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")  # добавь в Railway, чтобы включить ИИ
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")       # можешь поменять
-OPENAI_IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-1")
-IMAGE_SIZE = os.getenv("IMAGE_SIZE", "1024x1024")             # 256x256, 512x512, 1024x1024
+OPENAI_API_KEY       = os.getenv("OPENAI_API_KEY",       "")  # когда добавишь ключ — GPT и картинки заработают
+OPENAI_MODEL         = os.getenv("OPENAI_MODEL",         "gpt-4o-mini")
+OPENAI_IMAGE_MODEL   = os.getenv("OPENAI_IMAGE_MODEL",   "gpt-image-1")  # можно 'dall-e-3'
+IMAGE_SIZE           = os.getenv("IMAGE_SIZE",           "1024x1024")    # 256x256/512x512/1024x1024
+
+# Админы: списком ID через запятую, напр. "123,456"
+ADMIN_IDS_RAW        = os.getenv("ADMIN_IDS", "")
+ADMIN_IDS: List[int] = [int(x) for x in ADMIN_IDS_RAW.replace(" ", "").split(",") if x.strip().isdigit()]
 
 if not TELEGRAM_BOT_TOKEN or not WEBHOOK_SECRET:
     raise RuntimeError("TELEGRAM_BOT_TOKEN and WEBHOOK_SECRET must be set")
 
 TG_API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 
-# HTTP-клиент к Telegram
+# HTTP клиент к Telegram
 http: Optional[httpx.AsyncClient] = None
 
-# Память режимов на чат (простая, в ОЗУ, переживает только текущий запуск)
-CHAT_MODES: Dict[int, str] = {}  # chat_id -> "chat" | "image"
+# Состояния
+CHAT_MODES: Dict[int, str] = {}        # chat_id -> "chat" | "image"
+BOT_ENABLED: bool = True               # глобальный тумблер; админ может /on /off
 
-# ------------------ OpenAI Async client ------------------
+# OpenAI client (async)
 try:
-    # Новый SDK (openai>=1.0): AsyncOpenAI
     from openai import AsyncOpenAI
     openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 except Exception:
     openai_client = None
 
-# ==================  FASTAPI  ==================
+# ============== FASTAPI LIFESPAN ==============
 async def lifespan(app: FastAPI):
     global http
     http = httpx.AsyncClient(
         base_url=TG_API,
-        timeout=httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.0),
+        timeout=httpx.Timeout(connect=5.0, read=20.0, write=5.0, pool=5.0),
         headers={"Accept": "application/json"},
     )
     try:
@@ -57,18 +62,27 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-# ==================  TG HELPERS  ==================
+# ============== HELPERS (TG) ==============
 def escape_html(s: str) -> str:
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
-def default_keyboard() -> Dict[str, Any]:
+def kb_main(is_admin: bool = False) -> Dict[str, Any]:
+    rows = [
+        [{"text": "💬 Чат с GPT"}, {"text": "🎨 Создать изображение"}],
+        [{"text": "ℹ️ Помощь"}],
+    ]
+    if is_admin:
+        rows.append([{"text": "🛠 Админ-панель"}])
+    return {"keyboard": rows, "resize_keyboard": True, "is_persistent": True}
+
+def kb_admin() -> Dict[str, Any]:
+    status = "🟢 ВКЛ" if BOT_ENABLED else "🔴 ВЫКЛ"
     return {
         "keyboard": [
-            [{"text": "💬 Чат с GPT"}, {"text": "🎨 Создать изображение"}],
-            [{"text": "ℹ️ Помощь"}],
+            [{"text": "🟢 Включить бот"}, {"text": "🔴 Выключить бот"}],
+            [{"text": "⬅️ Назад"}],
         ],
         "resize_keyboard": True,
-        "one_time_keyboard": False,
         "is_persistent": True,
     }
 
@@ -89,7 +103,7 @@ async def tg_send_message(chat_id: int, text: str, reply_markup: Dict[str, Any] 
     except Exception:
         log.exception("sendMessage failed")
 
-async def tg_send_photo(chat_id: int, image_bytes: bytes, caption: str | None = None):
+async def tg_send_photo_bytes(chat_id: int, image_bytes: bytes, caption: str | None = None):
     assert http is not None
     try:
         files = {"photo": ("image.png", image_bytes, "image/png")}
@@ -99,30 +113,40 @@ async def tg_send_photo(chat_id: int, image_bytes: bytes, caption: str | None = 
             data["parse_mode"] = "HTML"
         r = await http.post("/sendPhoto", data=data, files=files)
         if r.is_error:
-            log.error("sendPhoto %s: %s", r.status_code, r.text)
+            log.error("sendPhoto(bytes) %s: %s", r.status_code, r.text)
     except Exception:
-        log.exception("sendPhoto failed")
+        log.exception("sendPhoto(bytes) failed")
 
-# ==================  ROUTES  ==================
+async def tg_send_photo_url(chat_id: int, url: str, caption: str | None = None):
+    assert http is not None
+    try:
+        data = {"chat_id": str(chat_id), "photo": url}
+        if caption:
+            data["caption"] = caption
+            data["parse_mode"] = "HTML"
+        r = await http.post("/sendPhoto", data=data)
+        if r.is_error:
+            log.error("sendPhoto(url) %s: %s", r.status_code, r.text)
+    except Exception:
+        log.exception("sendPhoto(url) failed")
+
+# ============== ROUTES ==============
 @app.get("/")
 async def root():
     return PlainTextResponse("OK")
 
 @app.get("/health")
 async def health():
-    return {"ok": True}
+    return {"ok": True, "enabled": BOT_ENABLED}
 
 @app.post("/webhook/{secret}")
 async def webhook(secret: str, request: Request):
-    # 1) Секрет пути
     if secret != WEBHOOK_SECRET:
         raise HTTPException(status_code=404)
-    # 2) Проверка заголовка Telegram (если указан при setWebhook)
     if TELEGRAM_WEBHOOK_TOKEN:
         header = request.headers.get("x-telegram-bot-api-secret-token")
         if header != TELEGRAM_WEBHOOK_TOKEN:
             raise HTTPException(status_code=403)
-    # 3) Быстро читаем тело и сразу 200
     try:
         raw = await asyncio.wait_for(request.body(), timeout=1.5)
     except asyncio.TimeoutError:
@@ -132,7 +156,7 @@ async def webhook(secret: str, request: Request):
     asyncio.create_task(process_raw_update(raw))
     return JSONResponse({"ok": True})
 
-# ==================  BACKGROUND LOGIC  ==================
+# ============== BACKGROUND ==============
 async def process_raw_update(raw: bytes):
     try:
         update = json.loads(raw.decode("utf-8"))
@@ -150,6 +174,12 @@ async def handle_update(update: Dict[str, Any]):
         chat_id = msg["chat"]["id"]
         text = (msg.get("text") or "").strip()
         low = text.casefold()
+        is_admin = chat_id in ADMIN_IDS
+
+        # --- Глобальный тумблер ---
+        if not BOT_ENABLED and not is_admin:
+            await tg_send_message(chat_id, "⏸ Бот на паузе. Обратитесь к администратору.")
+            return
 
         # --- Команды/кнопки ---
         if low in ("/start", "start"):
@@ -157,25 +187,61 @@ async def handle_update(update: Dict[str, Any]):
             await tg_send_message(
                 chat_id,
                 "👋 <b>Добро пожаловать в GPTBOT!</b>\n\n"
-                "Я готов работать в двух режимах:\n"
+                "Режимы:\n"
                 "• <b>Чат с GPT</b> — отвечаю как ИИ\n"
                 "• <b>Создать изображение</b> — рисую по описанию\n\n"
-                "Нажмите кнопку ниже или просто напишите сообщение.",
-                reply_markup=default_keyboard(),
+                "Выберите кнопкой ниже или просто напишите сообщение.",
+                reply_markup=kb_main(is_admin=is_admin),
             )
-            await tg_send_message(chat_id, "Выберите действие:", reply_markup=default_keyboard())
+            await tg_send_message(chat_id, "Выберите действие:", reply_markup=kb_main(is_admin=is_admin))
             return
 
         if low in ("ℹ️ помощь", "/help", "help"):
             await tg_send_message(
                 chat_id,
                 "ℹ️ <b>Справка</b>\n\n"
-                "• Нажмите «💬 Чат с GPT» — и любой текст пойдёт в ИИ.\n"
-                "• Нажмите «🎨 Создать изображение» — и любое сообщение станет описанием для картинки.\n"
-                "• Или используйте: <code>/image ваш_описание</code>",
+                "• «💬 Чат с GPT» — любой текст пойдёт в ИИ\n"
+                "• «🎨 Создать изображение» — ваш текст = описание картинки\n"
+                "• Команда: <code>/image ваш_описание</code>\n"
+                "• Админ: /on /off /admin",
             )
             return
 
+        # ----- Админ-панель -----
+        if low in ("/admin", "🛠 админ-панель"):
+            if not is_admin:
+                await tg_send_message(chat_id, "🚫 Доступ только для администратора.")
+                return
+            status = "🟢 ВКЛЮЧЕН" if BOT_ENABLED else "🔴 ВЫКЛЮЧЕН"
+            await tg_send_message(
+                chat_id,
+                f"🛠 <b>Админ-панель</b>\nСтатус бота: {status}\nКоманды: /on, /off",
+                reply_markup=kb_admin(),
+            )
+            return
+
+        if low in ("/on", "🟢 включить бот", "включить бота"):
+            if not is_admin:
+                await tg_send_message(chat_id, "🚫 Только админ может включать бота.")
+                return
+            global BOT_ENABLED
+            BOT_ENABLED = True
+            await tg_send_message(chat_id, "✅ Бот включён.", reply_markup=kb_admin())
+            return
+
+        if low in ("/off", "🔴 выключить бот", "выключить бота"):
+            if not is_admin:
+                await tg_send_message(chat_id, "🚫 Только админ может выключать бота.")
+                return
+            BOT_ENABLED = False
+            await tg_send_message(chat_id, "⏸ Бот выключен для пользователей.", reply_markup=kb_admin())
+            return
+
+        if low in ("⬅️ назад",):
+            await tg_send_message(chat_id, "Возвращаемся в меню.", reply_markup=kb_main(is_admin=is_admin))
+            return
+
+        # ----- Переключатели режимов -----
         if low in ("💬 чат с gpt",):
             CHAT_MODES[chat_id] = "chat"
             await tg_send_message(chat_id, "🗣 Режим: <b>Чат с GPT</b>. Пишите вопрос — отвечу как ИИ.")
@@ -183,14 +249,10 @@ async def handle_update(update: Dict[str, Any]):
 
         if low in ("🎨 создать изображение",):
             CHAT_MODES[chat_id] = "image"
-            await tg_send_message(
-                chat_id,
-                "🖼 Режим: <b>Изображение</b>.\n"
-                "Опишите, что нарисовать. Пример: <i>кот на скейте в городе</i>.",
-            )
+            await tg_send_message(chat_id, "🖼 Режим: <b>Изображение</b>. Опишите, что нарисовать.")
             return
 
-        # /image c аргументом — одноразовая генерация
+        # ----- /image одноразовая -----
         if low.startswith("/image"):
             prompt = text[len("/image"):].strip()
             if not prompt:
@@ -203,27 +265,23 @@ async def handle_update(update: Dict[str, Any]):
             await do_image(chat_id, prompt)
             return
 
-        # --- Режимы: chat / image ---
+        # ----- Режимы -----
         mode = CHAT_MODES.get(chat_id, "chat")
-
         if mode == "image":
-            # Любой текст — это prompt для картинки
             await do_image(chat_id, text)
             return
 
-        # Иначе — режим chat
         await do_chat(chat_id, text)
 
     except Exception:
         log.exception("handle update error")
 
-# ==================  CHAT & IMAGE IMPLEMENTATION  ==================
+# ============== CHAT & IMAGE ==============
 async def do_chat(chat_id: int, user_text: str):
-    # Если нет ключа OpenAI — предупреждаем и не падаем
     if not openai_client:
         await tg_send_message(
             chat_id,
-            "⚠️ ИИ пока не настроен. Добавьте переменную <b>OPENAI_API_KEY</b> в Railway — и я стану умным 🤖",
+            "⚠️ ИИ не настроен. Добавьте переменную <b>OPENAI_API_KEY</b> в Railway.",
         )
         return
     try:
@@ -237,9 +295,7 @@ async def do_chat(chat_id: int, user_text: str):
             max_tokens=700,
         )
         answer = (resp.choices[0].message.content or "").strip()
-        if not answer:
-            answer = "Извините, не смог сформулировать ответ."
-        await tg_send_message(chat_id, escape_html(answer))
+        await tg_send_message(chat_id, escape_html(answer) or "Извините, не смог сформулировать ответ.")
     except Exception as e:
         log.exception("openai chat failed")
         await tg_send_message(chat_id, f"❌ Ошибка ИИ: <code>{escape_html(str(e))}</code>")
@@ -251,18 +307,28 @@ async def do_image(chat_id: int, prompt: str):
             "⚠️ Генерация изображений не настроена. Добавьте <b>OPENAI_API_KEY</b> в Railway.",
         )
         return
-    # Сообщим пользователю, что работаем
     await tg_send_message(chat_id, f"🎨 Рисую по описанию: <i>{escape_html(prompt)}</i> …")
     try:
+        # Без response_format — совместимо с текущими API.
         img = await openai_client.images.generate(
             model=OPENAI_IMAGE_MODEL,
             prompt=prompt,
             size=IMAGE_SIZE,
-            response_format="b64_json",
+            # quality="high",  # можно включить при необходимости и поддержке моделью
+            # style="vivid",   # по желанию
         )
-        b64 = img.data[0].b64_json
-        image_bytes = base64.b64decode(b64)
-        await tg_send_photo(chat_id, image_bytes, caption=f"Готово: <i>{escape_html(prompt)}</i>")
+        # Универсально: пробуем b64, иначе url
+        data0 = img.data[0]
+        b64 = getattr(data0, "b64_json", None) or (data0.get("b64_json") if isinstance(data0, dict) else None)
+        url = getattr(data0, "url", None) or (data0.get("url") if isinstance(data0, dict) else None)
+
+        if b64:
+            image_bytes = base64.b64decode(b64)
+            await tg_send_photo_bytes(chat_id, image_bytes, caption=f"Готово: <i>{escape_html(prompt)}</i>")
+        elif url:
+            await tg_send_photo_url(chat_id, url, caption=f"Готово: <i>{escape_html(prompt)}</i>")
+        else:
+            await tg_send_message(chat_id, "❌ Не получил картинку от модели.")
     except Exception as e:
         log.exception("openai image failed")
         await tg_send_message(chat_id, f"❌ Ошибка генерации изображения: <code>{escape_html(str(e))}</code>")
