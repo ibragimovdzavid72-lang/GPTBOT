@@ -15,10 +15,10 @@ log = logging.getLogger("gptbot")
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
-TELEGRAM_WEBHOOK_TOKEN = os.getenv("TELEGRAM_WEBHOOK_TOKEN")  # опционально, если задаёшь при setWebhook
+TELEGRAM_WEBHOOK_TOKEN = os.getenv("TELEGRAM_WEBHOOK_TOKEN")
 
 if not TELEGRAM_BOT_TOKEN or not WEBHOOK_SECRET:
-    raise RuntimeError("Env TELEGRAM_BOT_TOKEN and WEBHOOK_SECRET required")
+    raise RuntimeError("TELEGRAM_BOT_TOKEN and WEBHOOK_SECRET must be set")
 
 TG_API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 
@@ -58,46 +58,36 @@ async def health():
 
 @app.post("/webhook/{secret}")
 async def webhook(secret: str, request: Request):
-    # 1) путь-секрет
     if secret != WEBHOOK_SECRET:
         raise HTTPException(status_code=404)
 
-    # 2) заголовок секрета Telegram (если использован в setWebhook)
     if TELEGRAM_WEBHOOK_TOKEN:
         if request.headers.get("x-telegram-bot-api-secret-token") != TELEGRAM_WEBHOOK_TOKEN:
             raise HTTPException(status_code=403)
 
-    # 3) быстро читаем сырое тело с маленьким таймаутом
     try:
         raw = await asyncio.wait_for(request.body(), timeout=1.5)
     except asyncio.TimeoutError:
-        # ни в коем случае не держим соединение — отвечаем сразу
         return JSONResponse({"ok": True})
 
     if not raw:
         return JSONResponse({"ok": True})
 
-    # 4) парсинг в фоне, ответ — мгновенно
     asyncio.create_task(process_raw_update(raw))
     return JSONResponse({"ok": True})
 
 # -------- Background logic --------
 async def process_raw_update(raw: bytes):
     try:
-        try:
-            import orjson  # быстрее, если установлен
-            update = orjson.loads(raw)
-        except Exception:
-            update = json.loads(raw.decode("utf-8"))
+        update = json.loads(raw.decode("utf-8"))
     except Exception:
         log.warning("invalid JSON payload")
         return
-
     await handle_update(update)
 
 async def handle_update(update: Dict[str, Any]):
     try:
-        msg = update.get("message") or update.get("edited_message") or update.get("channel_post")
+        msg = update.get("message")
         if not msg:
             return
 
@@ -106,14 +96,13 @@ async def handle_update(update: Dict[str, Any]):
         low = text.casefold()
 
         if low in ("/start", "start"):
-            await tg_send_message(chat_id, "✅ Бот на Railway слушает вебхук. Напишите любой текст — я отвечу.")
+            await tg_send_message(chat_id, "✅ Бот на Railway слушает вебхук. Напиши текст — я отвечу.")
             return
 
         if low in ("ℹ️ помощь", "/help", "help"):
-            await tg_send_message(chat_id, "Доступно:\n• /start — проверка\n• Напишите текст — эхо-ответ")
+            await tg_send_message(chat_id, "Доступно:\n• /start — проверка\n• Напиши текст — эхо-ответ")
             return
 
-        # эхо
         await tg_send_message(chat_id, f"Я получил: <b>{escape_html(text)}</b>")
     except Exception:
         log.exception("handle_update error")
