@@ -181,7 +181,7 @@ async def write_analytics(user_id: int, chat_id: int, kind: str, model: str, dur
 async def lifespan(app: FastAPI):
     global http, pg
     http = httpx.AsyncClient(timeout=12.0)
-    pg = await asyncpg.create_pool(DATABASE_URL, max_size=5)
+    pg = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
     await db_init()
     try:
         yield
