@@ -31,7 +31,7 @@ http: Optional[httpx.AsyncClient] = None
 client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 # Админ и глобальное состояние
-ADMIN_IDS = {123456789}  # замените на свой Telegram ID
+ADMIN_IDS = {1752390166}  # замените на свой Telegram ID
 BOT_ENABLED = True
 CHAT_MODES: Dict[int, str] = {}
 
