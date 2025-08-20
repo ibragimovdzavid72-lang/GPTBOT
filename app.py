@@ -130,10 +130,17 @@ async def handle_update(update: Dict[str, Any]):
         user_id = (msg.get("from") or {}).get("id")
         text = (msg.get("text") or "").strip()
         low = text.casefold()
+
+        # Нормализуем команду: /cmd@botname -> /cmd
+        cmd = ""
+        if low.startswith("/"):
+            first = low.split()[0]          # "/admin@MyBot"
+            cmd = first.split("@", 1)[0]    # "/admin"
+
         is_admin = bool(user_id and user_id in ADMIN_IDS)
 
         # === Диагностика ===
-        if low == "/whoami":
+        if cmd == "/whoami":
             await tg_send_message(
                 chat_id,
                 f"user_id: <code>{user_id}</code>\nchat_id: <code>{chat_id}</code>\nadmins: <code>{list(ADMIN_IDS)}</code>"
@@ -146,7 +153,7 @@ async def handle_update(update: Dict[str, Any]):
             return
 
         # --- Команды ---
-        if low in ("/start", "start"):
+        if cmd in ("/start", "start"):
             CHAT_MODES[chat_id] = "chat"
             await tg_send_message(
                 chat_id,
@@ -159,21 +166,25 @@ async def handle_update(update: Dict[str, Any]):
             )
             return
 
-        if low in ("ℹ️ помощь", "/help", "help"):
+        if cmd in ("/help",) or low in ("ℹ️ помощь", "help"):
             await tg_send_message(
                 chat_id,
                 "ℹ️ <b>Справка</b>\n\n"
                 "• «💬 Чат с GPT» — текст пойдёт в ИИ\n"
                 "• «🎨 Создать изображение» — текст = описание картинки\n"
                 "• Команда: <code>/image ваш_текст</code>\n"
-                "• Админ: /admin, /on, /off",
+                "• Админ: /admin, /on, /off, /whoami",
             )
             return
 
         # --- Админ-панель ---
-        if low in ("/admin", "🛠 админ-панель"):
+        if cmd == "/admin" or low == "🛠 админ-панель":
             if not is_admin:
-                await tg_send_message(chat_id, "🚫 Только для администратора.")
+                await tg_send_message(
+                    chat_id,
+                    "🚫 Только для администратора.\n"
+                    f"(ваш user_id: <code>{user_id}</code>)"
+                )
                 return
             status = "🟢 ВКЛЮЧЕН" if BOT_ENABLED else "🔴 ВЫКЛЮЧЕН"
             await tg_send_message(
@@ -183,7 +194,7 @@ async def handle_update(update: Dict[str, Any]):
             )
             return
 
-        if low in ("/on", "🟢 включить бот", "включить бота"):
+        if cmd == "/on" or low in ("🟢 включить бот", "включить бота"):
             if not is_admin:
                 await tg_send_message(chat_id, "🚫 Нет доступа.")
                 return
@@ -191,7 +202,7 @@ async def handle_update(update: Dict[str, Any]):
             await tg_send_message(chat_id, "✅ Бот включён.", reply_markup=kb_admin())
             return
 
-        if low in ("/off", "🔴 выключить бот", "выключить бота"):
+        if cmd == "/off" or low in ("🔴 выключить бот", "выключить бота"):
             if not is_admin:
                 await tg_send_message(chat_id, "🚫 Нет доступа.")
                 return
@@ -199,23 +210,24 @@ async def handle_update(update: Dict[str, Any]):
             await tg_send_message(chat_id, "⏸ Бот выключен.", reply_markup=kb_admin())
             return
 
-        if low in ("⬅️ назад",):
+        if low == "⬅️ назад":
             await tg_send_message(chat_id, "🔙 Возвращаемся в меню.", reply_markup=kb_main(is_admin=is_admin))
             return
 
         # --- Переключение режимов ---
-        if low in ("💬 чат с gpt",):
+        if low == "💬 чат с gpt":
             CHAT_MODES[chat_id] = "chat"
             await tg_send_message(chat_id, "🗣 Режим: Чат с GPT")
             return
 
-        if low in ("🎨 создать изображение",):
+        if low == "🎨 создать изображение":
             CHAT_MODES[chat_id] = "image"
             await tg_send_message(chat_id, "🖼 Режим: Изображение. Напишите описание.")
             return
 
-        if low.startswith("/image"):
-            prompt = text[len("/image"):].strip()
+        if cmd == "/image" or low.startswith("/image "):
+            prompt = text.split(maxsplit=1)
+            prompt = prompt[1] if len(prompt) > 1 else ""
             if not prompt:
                 await tg_send_message(chat_id, "📸 Пример: /image закат над морем")
                 return
