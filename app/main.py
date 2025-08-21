@@ -13,10 +13,10 @@ http: httpx.AsyncClient | None = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # HTTP-клиент (если захочешь использовать для внешних запросов)
+    # общий HTTP-клиент (по желанию, если понадобится)
     global http
     http = httpx.AsyncClient(timeout=12.0)
-    # Подключение к БД (если DATABASE_URL есть)
+    # попытка подключения к БД (если DATABASE_URL задан)
     await db_safe_connect(DATABASE_URL)
     try:
         yield
@@ -37,21 +37,21 @@ async def health():
 
 @app.post("/webhook/{secret}")
 async def webhook(secret: str, request: Request):
-    # Проверка секрета из URL
+    # проверка секрета из URL
     if secret != WEBHOOK_SECRET:
         raise HTTPException(status_code=404)
-    # Доп. защита: секретный заголовок Telegram (если задан)
+    # дополнительная проверка заголовка Telegram (если включили TELEGRAM_WEBHOOK_TOKEN)
     if TELEGRAM_WEBHOOK_TOKEN:
         if request.headers.get("x-telegram-bot-api-secret-token") != TELEGRAM_WEBHOOK_TOKEN:
             raise HTTPException(status_code=403)
 
+    # читаем апдейт
     try:
         raw = await request.body()
         update = json.loads(raw.decode("utf-8")) if raw else {}
     except Exception:
-        # некорректный JSON — не роняем приложение
         return JSONResponse({"ok": True})
 
-    # Обработка апдейта асинхронно, чтобы не блокировать webhook
+    # обрабатываем асинхронно, чтобы webhook отвечал быстро
     asyncio.create_task(handle_update(update))
     return JSONResponse({"ok": True})
