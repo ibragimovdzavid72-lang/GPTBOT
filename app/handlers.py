@@ -1,16 +1,15 @@
 import logging
 from typing import Any, Dict
-from .settings import ADMIN_IDS, BOT_USERNAME, FREE_MSGS_PER_DAY, FREE_IMAGES_PER_DAY
+from .settings import ADMIN_IDS, BOT_USERNAME, FREE_MSGS_PER_DAY, FREE_IMAGES_PER_DAY, MINI_APP_URL
 from .tg import tg_send_message
-from .openai_api import do_chat, do_image, do_image_edit
+from .openai_api import do_chat, do_image, do_image_edit, do_voice
 from .db import DB_ENABLED, usage_get_today
 
 log = logging.getLogger("gptbot")
 
 CHAT_MODES: Dict[int, str] = {}   # chat_id -> "chat"|"image"
-BOT_ENABLED = True                # админ может выключать бота
+BOT_ENABLED = True
 
-# ---------- клавиатуры ----------
 def kb_main(is_admin: bool = False) -> Dict[str, Any]:
     rows = [
         [{"text": "💬 Чат с GPT"}, {"text": "🎨 Создать изображение"}],
@@ -29,12 +28,19 @@ def kb_admin() -> Dict[str, Any]:
         "resize_keyboard": True,
     }
 
+def ikb_miniapp() -> Dict[str, Any]:
+    if not MINI_APP_URL:
+        return {}
+    return {
+        "inline_keyboard": [[
+            {"text": "Открыть Mini App", "web_app": {"url": MINI_APP_URL}}
+        ]]
+    }
+
 def remove_keyboard() -> Dict[str, Any]:
     return {"remove_keyboard": True}
 
-# ---------- утилиты ----------
 def _is(text: str, *variants: str) -> bool:
-    """Гибкое совпадение: без регистра и эмодзи можно писать или без эмодзи."""
     low = (text or "").casefold().strip()
     for v in variants:
         vv = v.casefold().strip()
@@ -42,18 +48,18 @@ def _is(text: str, *variants: str) -> bool:
             return True
     return False
 
-# ---------- обработчик ----------
 async def handle_update(update: Dict[str, Any]):
     global BOT_ENABLED
 
     try:
+        # поддержим и inline_query в будущем; сейчас фокус на message
         msg = update.get("message") or update.get("edited_message")
         if not msg:
             return
 
         chat = msg["chat"]
         chat_id = chat["id"]
-        chat_type = chat.get("type")  # private | group | supergroup
+        chat_type = chat.get("type")
         user_id = (msg.get("from") or {}).get("id")
         if not user_id:
             return
@@ -62,12 +68,12 @@ async def handle_update(update: Dict[str, Any]):
         low = text.casefold()
         is_admin = user_id in ADMIN_IDS
 
-        # В группах реагируем только на упоминание @username или слэш-команды
+        # в группах — только команды или упоминания
         if chat_type in ("group", "supergroup"):
             if not low.startswith("/") and (BOT_USERNAME and BOT_USERNAME not in low):
                 return
 
-        # /whoami — диагностика
+        # диагностика
         if low.startswith("/whoami"):
             txt, img = await usage_get_today(user_id)
             await tg_send_message(
@@ -79,21 +85,21 @@ async def handle_update(update: Dict[str, Any]):
             )
             return
 
-        # если бот выключен админом — игнорим всех, кроме админа
         if not BOT_ENABLED and not is_admin:
             await tg_send_message(chat_id, "⏸ Бот на паузе. Обратитесь к администратору.")
             return
 
-        # ---------- команды ----------
-        if _is(text, "/start", "start", "меню", "открыть меню"):
+        # команды
+        if _is(text, "/start", "start", "меню"):
             CHAT_MODES[chat_id] = "chat"
             await tg_send_message(
                 chat_id,
                 "👋 <b>Добро пожаловать в GPTBOT!</b>\n\n"
-                "🟢 Режимы:\n• <b>Чат</b> — диалог с памятью (если БД включена)\n"
-                "• <b>Изображение</b> — генерация по описанию или редактирование по фото/подписи",
+                "🟢 Режимы:\n• Чат — диалог с GPT\n• Изображение — генерация/редактирование картинок",
                 reply_markup=kb_main(is_admin)
             )
+            if MINI_APP_URL:
+                await tg_send_message(chat_id, "Mini App:", reply_markup=ikb_miniapp())
             return
 
         if _is(text, "/help", "help", "ℹ️ помощь", "помощь", "как пользоваться"):
@@ -102,11 +108,17 @@ async def handle_update(update: Dict[str, Any]):
                 "ℹ️ <b>Справка</b>\n"
                 "• Напишите текст — отвечу как ChatGPT\n"
                 "• <code>/image текст</code> — нарисую картинку\n"
-                "• Отправьте фото + подпись — сделаю <i>редактирование</i>/вариацию\n"
+                "• Отправьте фото + подпись — сделаю вариации/редактирование\n"
+                "• Отправьте <b>голосовое</b> — распознаю и отвечу\n"
+                "• <code>/hidekb</code> — скрыть клавиатуру\n"
                 "• <code>/whoami</code> — диагностика\n"
-                "• Админ: <code>/admin</code>, <code>/on</code>, <code>/off</code>, <code>/stats</code>",
+                "• Админ: /admin /on /off /stats",
                 reply_markup=kb_main(is_admin)
             )
+            return
+
+        if _is(text, "/hidekb"):
+            await tg_send_message(chat_id, "Клавиатура скрыта.", reply_markup=remove_keyboard())
             return
 
         if _is(text, "/admin", "🛠 админ-панель"):
@@ -115,10 +127,7 @@ async def handle_update(update: Dict[str, Any]):
                 return
             status = "🟢 ВКЛ" if BOT_ENABLED else "🔴 ВЫКЛ"
             dbs = "🟢" if DB_ENABLED else "🔴"
-            await tg_send_message(
-                chat_id, f"🛠 <b>Админ-панель</b>\nСтатус бота: {status}\nБаза данных: {dbs}\n",
-                reply_markup=kb_admin()
-            )
+            await tg_send_message(chat_id, f"🛠 <b>Админ-панель</b>\nСтатус бота: {status}\nБаза данных: {dbs}\n", reply_markup=kb_admin())
             return
 
         if _is(text, "/on", "🟢 включить бот", "включить бота"):
@@ -149,7 +158,6 @@ async def handle_update(update: Dict[str, Any]):
             await tg_send_message(chat_id, "🔙 Назад в меню.", reply_markup=kb_main(is_admin))
             return
 
-        # переключение режимов кнопками
         if _is(text, "💬 чат с gpt", "чат", "режим чат"):
             CHAT_MODES[chat_id] = "chat"
             await tg_send_message(chat_id, "🗣 Режим: Чат", reply_markup=kb_main(is_admin))
@@ -160,7 +168,7 @@ async def handle_update(update: Dict[str, Any]):
             await tg_send_message(chat_id, "🖼 Режим: Изображение. Опишите, что нарисовать.", reply_markup=kb_main(is_admin))
             return
 
-        # ---------- /image команда ----------
+        # /image
         if low.startswith("/image"):
             parts = text.split(maxsplit=1)
             prompt = parts[1] if len(parts) > 1 else ""
@@ -170,14 +178,21 @@ async def handle_update(update: Dict[str, Any]):
                 await do_image(user_id, chat_id, prompt)
             return
 
-        # ---------- обработка фото (image-to-image) ----------
+        # фото
         if msg.get("photo"):
-            # подпись к фото — промпт
             caption = (msg.get("caption") or "").strip() or "Сделай вариации"
             await do_image_edit(user_id, chat_id, msg["photo"], caption)
             return
 
-        # ---------- обычный текст по текущему режиму ----------
+        # голос
+        if msg.get("voice"):
+            await do_voice(user_id, chat_id, msg["voice"])
+            return
+        if msg.get("audio"):
+            await do_voice(user_id, chat_id, msg["audio"])
+            return
+
+        # обычный текст по режиму
         mode = CHAT_MODES.get(chat_id, "chat")
         if mode == "image":
             await do_image(user_id, chat_id, text)
