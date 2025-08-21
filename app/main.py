@@ -1,40 +1,35 @@
-import json, asyncio, logging
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import JSONResponse, PlainTextResponse
+import os
+import httpx
+from fastapi import FastAPI, Request
 from contextlib import asynccontextmanager
 
-from .settings import WEBHOOK_SECRET, TELEGRAM_WEBHOOK_TOKEN
-from .tg import init_http, close_http
-from .db import db_safe_connect, DB_ENABLED
 from .handlers import handle_update
+from .settings import WEBHOOK_SECRET, TELEGRAM_WEBHOOK_TOKEN, DATABASE_URL
+from .db import db_safe_connect, DB_ENABLED, pg_pool
 
-log=logging.getLogger("main")
+http: httpx.AsyncClient = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await init_http()
-    await db_safe_connect()
-    yield
-    await close_http()
+    global http
+    http = httpx.AsyncClient(timeout=12.0)
+    # Подключение к БД
+    await db_safe_connect(DATABASE_URL)
+    try:
+        yield
+    finally:
+        await http.aclose()
+        if DB_ENABLED and pg_pool:
+            await pg_pool.close()
 
-app=FastAPI(lifespan=lifespan)
+app = FastAPI(lifespan=lifespan)
+
+@app.post(f"/webhook/{WEBHOOK_SECRET}")
+async def webhook(request: Request):
+    data = await request.json()
+    await handle_update(data, http)
+    return {"ok": True}
 
 @app.get("/")
 async def root():
-    return PlainTextResponse("OK")
-
-@app.get("/health")
-async def health():
-    return {"ok":True,"db":DB_ENABLED}
-
-@app.post("/webhook/{secret}")
-async def webhook(secret:str,request:Request):
-    if secret!=WEBHOOK_SECRET:
-        raise HTTPException(status_code=404)
-    if TELEGRAM_WEBHOOK_TOKEN:
-        if request.headers.get("x-telegram-bot-api-secret-token")!=TELEGRAM_WEBHOOK_TOKEN:
-            raise HTTPException(status_code=403)
-    raw=await request.body()
-    update=json.loads(raw.decode("utf-8")) if raw else {}
-    asyncio.create_task(handle_update(update))
-    return JSONResponse({"ok":True})
+    return {"status": "ok", "webhook": f"/webhook/{WEBHOOK_SECRET}"}
