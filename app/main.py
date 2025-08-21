@@ -11,14 +11,11 @@ from .handlers import handle_update
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 1) Инициализируем HTTP-клиент для Telegram (tg.py)
     await init_http()
-    # 2) Подключаемся к БД (если задан DATABASE_URL)
     await db_safe_connect(DATABASE_URL)
     try:
         yield
     finally:
-        # 3) Корректно закрываем HTTP-клиент и пул БД
         await close_http()
         if DB_ENABLED and pg_pool:
             await pg_pool.close()
@@ -35,22 +32,17 @@ async def health():
 
 @app.post("/webhook/{secret}")
 async def webhook(secret: str, request: Request):
-    # Проверяем секрет в URL
     if secret != WEBHOOK_SECRET:
         raise HTTPException(status_code=404)
-    # Доп. защита: проверяем секретный заголовок Telegram (если задан)
     if TELEGRAM_WEBHOOK_TOKEN:
         if request.headers.get("x-telegram-bot-api-secret-token") != TELEGRAM_WEBHOOK_TOKEN:
             raise HTTPException(status_code=403)
 
-    # Читаем апдейт
     try:
         raw = await request.body()
         update = json.loads(raw.decode("utf-8")) if raw else {}
     except Exception:
-        # На странный JSON просто отвечаем ok, не падаем
         return JSONResponse({"ok": True})
 
-    # Обрабатываем асинхронно, чтобы webhook отвечал мгновенно
     asyncio.create_task(handle_update(update))
     return JSONResponse({"ok": True})
