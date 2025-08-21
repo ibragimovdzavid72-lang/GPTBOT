@@ -1,6 +1,6 @@
 import logging
-import httpx
 from typing import Any, Dict
+import httpx
 from .settings import TELEGRAM_BOT_TOKEN
 
 TG_API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
