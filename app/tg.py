@@ -16,6 +16,15 @@ async def close_http():
     global http
     if http:
         await http.aclose()
+        http = None
+
+async def tg_send_action(chat_id: int, action: str):
+    """typing, upload_photo и т.п."""
+    assert http is not None
+    try:
+        await http.post(f"{TG_API}/sendChatAction", data={"chat_id": chat_id, "action": action})
+    except Exception:
+        log.exception("sendChatAction failed")
 
 async def tg_send_message(chat_id: int, text: str, reply_markup: Dict[str, Any] | None = None):
     assert http is not None
