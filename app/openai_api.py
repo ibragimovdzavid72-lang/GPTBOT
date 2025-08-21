@@ -2,7 +2,6 @@ import time
 import logging
 import subprocess
 import httpx
-
 from openai import AsyncOpenAI
 
 from .settings import (
@@ -10,13 +9,13 @@ from .settings import (
     FREE_MSGS_PER_DAY, FREE_IMAGES_PER_DAY, ADMIN_IDS, TELEGRAM_BOT_TOKEN
 )
 from .db import history_fetch, history_add, usage_get_today, usage_inc, analytics_write
-from .tg import tg_send_message, tg_send_photo
+from .tg import tg_send_message, tg_send_photo, tg_send_action
 
 log = logging.getLogger("gptbot")
 client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 TG_API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 
-# --- модерация ---
+# ---------- модерация ----------
 async def moderate(text: str) -> bool:
     try:
         res = await client.moderations.create(model="omni-moderation-latest", input=text)
@@ -25,7 +24,7 @@ async def moderate(text: str) -> bool:
         log.warning("moderation failed: %s", e)
         return True
 
-# --- чат ---
+# ---------- чат ----------
 async def do_chat(user_id: int, chat_id: int, text: str):
     t0 = time.perf_counter()
     model_used = OPENAI_MODEL
@@ -45,12 +44,18 @@ async def do_chat(user_id: int, chat_id: int, text: str):
             messages.append({"role": role, "content": content})
         messages.append({"role": "user", "content": text})
 
+        await tg_send_action(chat_id, "typing")
+
         try:
-            resp = await client.chat.completions.create(model=model_used, messages=messages, temperature=0.7, max_tokens=800)
+            resp = await client.chat.completions.create(
+                model=model_used, messages=messages, temperature=0.7, max_tokens=800
+            )
         except Exception as e1:
             log.warning("Primary model failed (%s). Trying fallback...", e1)
             model_used = FALLBACK_MODEL
-            resp = await client.chat.completions.create(model=model_used, messages=messages, temperature=0.7, max_tokens=800)
+            resp = await client.chat.completions.create(
+                model=model_used, messages=messages, temperature=0.7, max_tokens=800
+            )
 
         answer = (resp.choices[0].message.content or "").strip() or "⚠️ Пустой ответ."
         if not await moderate(answer):
@@ -61,12 +66,16 @@ async def do_chat(user_id: int, chat_id: int, text: str):
         await usage_inc(user_id, "chat")
 
         await tg_send_message(chat_id, answer)
-        await analytics_write(user_id, chat_id, "chat", model_used, int((time.perf_counter()-t0)*1000), "ok", None)
+        await analytics_write(
+            user_id, chat_id, "chat", model_used, int((time.perf_counter()-t0)*1000), "ok", None
+        )
     except Exception as e:
-        await analytics_write(user_id, chat_id, "chat", model_used, int((time.perf_counter()-t0)*1000), "err", str(e))
+        await analytics_write(
+            user_id, chat_id, "chat", model_used, int((time.perf_counter()-t0)*1000), "err", str(e)
+        )
         await tg_send_message(chat_id, f"❌ Ошибка ИИ: <code>{e}</code>")
 
-# --- генерация изображения ---
+# ---------- генерация изображения ----------
 async def do_image(user_id: int, chat_id: int, prompt: str):
     t0 = time.perf_counter()
     try:
@@ -79,17 +88,23 @@ async def do_image(user_id: int, chat_id: int, prompt: str):
             await tg_send_message(chat_id, "⚠️ Описание отклонено модерацией.")
             return
 
+        await tg_send_action(chat_id, "upload_photo")
+
         resp = await client.images.generate(model=OPENAI_IMAGE_MODEL, prompt=prompt, size="1024x1024")
         url = resp.data[0].url
         await tg_send_photo(chat_id, url, caption=f"🖼 {prompt}")
         await usage_inc(user_id, "image")
 
-        await analytics_write(user_id, chat_id, "image", OPENAI_IMAGE_MODEL, int((time.perf_counter()-t0)*1000), "ok", None)
+        await analytics_write(
+            user_id, chat_id, "image", OPENAI_IMAGE_MODEL, int((time.perf_counter()-t0)*1000), "ok", None
+        )
     except Exception as e:
-        await analytics_write(user_id, chat_id, "image", OPENAI_IMAGE_MODEL, int((time.perf_counter()-t0)*1000), "err", str(e))
+        await analytics_write(
+            user_id, chat_id, "image", OPENAI_IMAGE_MODEL, int((time.perf_counter()-t0)*1000), "err", str(e)
+        )
         await tg_send_message(chat_id, f"❌ Ошибка генерации изображения: <code>{e}</code>")
 
-# --- редактирование/вариации присланного фото ---
+# ---------- редактирование/вариации присланного фото ----------
 async def do_image_edit(user_id: int, chat_id: int, photo_sizes: list, prompt: str):
     try:
         file_id = photo_sizes[-1]["file_id"]
@@ -108,21 +123,43 @@ async def do_image_edit(user_id: int, chat_id: int, photo_sizes: list, prompt: s
             await tg_send_message(chat_id, "⚠️ Подпись отклонена модерацией.")
             return
 
+        await tg_send_action(chat_id, "upload_photo")
+
         try:
             with open(src, "rb") as f:
-                edit = await client.images.edits(model=OPENAI_IMAGE_MODEL, image=f, prompt=prompt, size="1024x1024")
+                edit = await client.images.edits(
+                    model=OPENAI_IMAGE_MODEL, image=f, prompt=prompt, size="1024x1024"
+                )
             url = edit.data[0].url
-        except Exception:
-            gen = await client.images.generate(model=OPENAI_IMAGE_MODEL, prompt=prompt, size="1024x1024")
-            url = gen.data[0].url
+            await tg_send_photo(chat_id, url, caption=f"🖼 {prompt}")
+            await usage_inc(user_id, "image")
+            return
+        except Exception as e1:
+            msg = str(e1).lower()
+            policy_hit = any(x in msg for x in [
+                "content_policy_violation", "safety system", "not allowed", "policy"
+            ])
+            if not policy_hit:
+                raise
 
-        await tg_send_photo(chat_id, url, caption=f"🖼 {prompt}")
+        # безопасный фоллбэк (без текста/брендов)
+        safe_prompt = (
+            "Неоновая минималистичная иконка дружелюбного робота на тёмном фоне, "
+            "без текста и логотипов, чистый современный стиль, высокое качество."
+        )
+        gen = await client.images.generate(model=OPENAI_IMAGE_MODEL, prompt=safe_prompt, size="1024x1024")
+        url = gen.data[0].url
+        await tg_send_photo(
+            chat_id, url,
+            caption="🖼 Редактирование с брендами/текстом запрещено — сделал безопасный вариант без текста."
+        )
         await usage_inc(user_id, "image")
+
     except Exception as e:
         log.exception("image edit failed: %s", e)
         await tg_send_message(chat_id, f"❌ Ошибка обработки изображения: <code>{e}</code>")
 
-# --- голосовые: распознаём и отвечаем ---
+# ---------- голосовые ----------
 async def do_voice(user_id: int, chat_id: int, voice_obj: dict):
     try:
         file_id = voice_obj["file_id"]
@@ -138,19 +175,27 @@ async def do_voice(user_id: int, chat_id: int, voice_obj: dict):
         with open(src_ogg, "wb") as f:
             f.write(r.content)
 
-        # пробуем отправить .ogg напрямую
+        # пробуем .ogg как есть
         try:
             with open(src_ogg, "rb") as f:
-                tr = await client.audio.transcriptions.create(model="gpt-4o-mini-transcribe", file=f)
+                tr = await client.audio.transcriptions.create(
+                    model="gpt-4o-mini-transcribe",
+                    file=f
+                )
             text = (tr.text or "").strip()
         except Exception as e1:
-            # конвертируем через ffmpeg и повторяем
+            # конвертируем через ffmpeg → mp3
             mp3 = "/tmp/input.mp3"
             try:
-                subprocess.run(["ffmpeg", "-y", "-i", src_ogg, "-ar", "16000", "-ac", "1", mp3],
-                               check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                subprocess.run(
+                    ["ffmpeg", "-y", "-i", src_ogg, "-ar", "16000", "-ac", "1", mp3],
+                    check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                )
                 with open(mp3, "rb") as f:
-                    tr = await client.audio.transcriptions.create(model="gpt-4o-mini-transcribe", file=f)
+                    tr = await client.audio.transcriptions.create(
+                        model="gpt-4o-mini-transcribe",
+                        file=f
+                    )
                 text = (tr.text or "").strip()
             except Exception as e2:
                 raise RuntimeError(f"transcribe failed: {e1} | after-convert: {e2}")
@@ -159,8 +204,16 @@ async def do_voice(user_id: int, chat_id: int, voice_obj: dict):
             await tg_send_message(chat_id, "⚠️ Не удалось распознать голосовое сообщение.")
             return
 
+        # показываем, что «печатает», и отвечаем на распознанный текст
         await tg_send_message(chat_id, f"🗣️ Распознал: <i>{text}</i>")
-        await do_chat(user_id, chat_id, text)
+        await tg_send_action(chat_id, "typing")
+
+        try:
+            await do_chat(user_id, chat_id, text)
+        except Exception as e:
+            log.exception("do_chat from voice failed: %s", e)
+            await tg_send_message(chat_id, f"❌ Ошибка ответа на голосовое: <code>{e}</code>")
+
     except Exception as e:
         log.exception("voice failed: %s", e)
         await tg_send_message(chat_id, f"❌ Ошибка распознавания голоса: <code>{e}</code>")
