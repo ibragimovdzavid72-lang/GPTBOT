@@ -1,19 +1,22 @@
-import os
+import json
+import asyncio
 import httpx
-from fastapi import FastAPI, Request
 from contextlib import asynccontextmanager
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import PlainTextResponse, JSONResponse
 
-from .handlers import handle_update
 from .settings import WEBHOOK_SECRET, TELEGRAM_WEBHOOK_TOKEN, DATABASE_URL
 from .db import db_safe_connect, DB_ENABLED, pg_pool
+from .handlers import handle_update
 
-http: httpx.AsyncClient = None
+http: httpx.AsyncClient | None = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # HTTP-клиент (если захочешь использовать для внешних запросов)
     global http
     http = httpx.AsyncClient(timeout=12.0)
-    # Подключение к БД
+    # Подключение к БД (если DATABASE_URL есть)
     await db_safe_connect(DATABASE_URL)
     try:
         yield
@@ -24,12 +27,31 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-@app.post(f"/webhook/{WEBHOOK_SECRET}")
-async def webhook(request: Request):
-    data = await request.json()
-    await handle_update(data, http)
-    return {"ok": True}
-
 @app.get("/")
 async def root():
-    return {"status": "ok", "webhook": f"/webhook/{WEBHOOK_SECRET}"}
+    return PlainTextResponse("OK")
+
+@app.get("/health")
+async def health():
+    return {"ok": True, "db": DB_ENABLED}
+
+@app.post("/webhook/{secret}")
+async def webhook(secret: str, request: Request):
+    # Проверка секрета из URL
+    if secret != WEBHOOK_SECRET:
+        raise HTTPException(status_code=404)
+    # Доп. защита: секретный заголовок Telegram (если задан)
+    if TELEGRAM_WEBHOOK_TOKEN:
+        if request.headers.get("x-telegram-bot-api-secret-token") != TELEGRAM_WEBHOOK_TOKEN:
+            raise HTTPException(status_code=403)
+
+    try:
+        raw = await request.body()
+        update = json.loads(raw.decode("utf-8")) if raw else {}
+    except Exception:
+        # некорректный JSON — не роняем приложение
+        return JSONResponse({"ok": True})
+
+    # Обработка апдейта асинхронно, чтобы не блокировать webhook
+    asyncio.create_task(handle_update(update))
+    return JSONResponse({"ok": True})
