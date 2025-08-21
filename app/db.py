@@ -1,14 +1,20 @@
 import logging
-import asyncpg
 from datetime import date
-from typing import Any, List, Dict, Tuple, Optional
+from typing import Any, Dict, List, Tuple, Optional
 from .settings import DATABASE_URL
 
 log = logging.getLogger("db")
 
-pg_pool = None
+# попробуем импортировать asyncpg
+try:
+    import asyncpg  # type: ignore
+except Exception:
+    asyncpg = None  # type: ignore
+
+pg_pool: Any = None
 DB_ENABLED = False
 
+# ---------- SQL-схема ----------
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS users (
   user_id BIGINT PRIMARY KEY,
@@ -31,7 +37,6 @@ CREATE TABLE IF NOT EXISTS messages (
   content TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-
 CREATE INDEX IF NOT EXISTS idx_messages_chat_time ON messages(chat_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS usage_daily (
@@ -46,39 +51,15 @@ CREATE TABLE IF NOT EXISTS analytics (
   id BIGSERIAL PRIMARY KEY,
   user_id BIGINT,
   chat_id BIGINT,
-  kind TEXT,
+  kind TEXT,          -- "chat" | "image"
   model TEXT,
   duration_ms INT,
-  status TEXT,
+  status TEXT,        -- "ok" | "err"
   err TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 """
 
-async def db_safe_connect():
-    global pg_pool, DB_ENABLED
-    if not DATABASE_URL:
-        log.warning("DB disabled: DATABASE_URL is empty")
-        return
-    try:
-        pg_pool = await asyncpg.create_pool(dsn=DATABASE_URL, min_size=1, max_size=5)
-        async with pg_pool.acquire() as conn:
-            await conn.execute(SCHEMA_SQL)
-        DB_ENABLED = True
-        log.info("DB enabled and ready")
-    except Exception as e:
-        DB_ENABLED = False
-        pg_pool = None
-        log.error("DB connect failed: %s", e)
-
-async def db_exec(query: str, *args):
-    if not DB_ENABLED or not pg_pool:
-        return
-    async with pg_pool.acquire() as conn:
-        await conn.execute(query, *args)
-
-async def db_fetch(query: str, *args):
-    if not DB_ENABLED or not pg_pool:
-        return []
-    async with pg_pool.acquire() as conn:
-        return await conn.fetch(query, *args)
+# ---------- in-memory fallback ----------
+_MEM_HISTORY: Dict[int, List[Tuple[str, str]]] = {}           # chat_id -> [(role, content)]
+_MEM_USAGE: Dict[Tuple[int, date], Dict[str, int]] = {}
