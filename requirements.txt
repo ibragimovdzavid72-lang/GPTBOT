@@ -4,7 +4,6 @@ openai==1.40.0
 sqlalchemy==2.0.32
 asyncpg==0.29.0
 python-dotenv==1.0.1
-pydub==0.25.1
 orjson==3.10.7
 tenacity==8.2.3
 duckduckgo-search==5.3.1
