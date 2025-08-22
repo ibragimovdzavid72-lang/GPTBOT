@@ -73,15 +73,23 @@ async def run_tool(name: str, args: Dict[str, Any]) -> str:
     if name=="tool_wiki": return await tool_wiki(args.get("query",""))
     return f"Неизвестный инструмент: {name}"
 
+async def _response_with_fallback(args: Dict[str, Any]):
+    try:
+        return await client.responses.create(**args)
+    except Exception:
+        args["model"] = OPENAI_FALLBACK_MODEL
+        return await client.responses.create(**args)
+
 @retry(stop=stop_after_attempt(2), wait=wait_exponential(min=1, max=4))
 async def respond_text(history: List[Dict[str,str]], *, use_tools: bool=False) -> str:
     args: Dict[str, Any] = {"model": OPENAI_MODEL, "input": history}
     if use_tools: args["tools"] = FUNCTIONS; args["tool_choice"] = "auto"
-    resp = await client.responses.create(**args)
+    resp = await _response_with_fallback(args)
     if resp.output and resp.output[0].type=="tool_use":
         t = resp.output[0].tool_use
         result = await run_tool(t.name, t.arguments or {})
-        resp2 = await client.responses.create(model=OPENAI_MODEL, input=history + [{"role":"tool","name":t.name,"content":result}])
+        follow_args = {"model": OPENAI_MODEL, "input": history + [{"role":"tool","name":t.name,"content":result}]}
+        resp2 = await _response_with_fallback(follow_args)
         return resp2.output_text or ""
     return resp.output_text or ""
 
