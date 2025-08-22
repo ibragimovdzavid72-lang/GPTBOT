@@ -7,7 +7,6 @@
 - Railway → New Project → Deploy from GitHub.
 
 ## 2) Variables (Railway)
-```
 BOT_TOKEN=твой_бот_токен
 OPENAI_API_KEY=твоя_ключ_OpenAI
 DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/db
@@ -21,7 +20,6 @@ HISTORY_LIMIT=20
 RATE_PER_MIN=20
 ADMIN_IDS=123456789
 TZ=Europe/Amsterdam
-```
 
 ## 3) Запуск
 Start Command: `python main.py`
