@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+TELEGRAM_BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 PUBLIC_URL = os.getenv("PUBLIC_URL", "").rstrip("/")
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
