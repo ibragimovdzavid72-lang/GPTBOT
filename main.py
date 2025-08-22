@@ -1,6 +1,6 @@
 import os
 import asyncio
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from aiogram import Bot, Dispatcher
 from aiogram.types import Update
 from aiogram.enums.parse_mode import ParseMode
@@ -43,6 +43,8 @@ async def on_shutdown():
 # Получение апдейтов от Telegram
 @app.post(WEBHOOK_PATH)
 async def telegram_webhook(request: Request):
+    if request.headers.get("X-Telegram-Bot-Api-Secret-Token") != BOT_WEBHOOK_SECRET:
+        raise HTTPException(status_code=403, detail="Invalid secret token")
     data = await request.json()
     update = Update.model_validate(data)  # Pydantic v2 в aiogram3
     await dp.feed_update(bot, update)
