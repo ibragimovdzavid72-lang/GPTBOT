@@ -1,40 +1,53 @@
-import asyncio, logging
+import os
+import asyncio
+from fastapi import FastAPI, Request
 from aiogram import Bot, Dispatcher
-from aiogram.enums import ParseMode
-from aiogram.types import BotCommand
+from aiogram.types import Update
+from aiogram.enums.parse_mode import ParseMode
+
 from settings import BOT_TOKEN
-from db import init_db, SessionLocal, due_reminders, mark_reminder_done
-from handlers import router
+from handlers import router  # твои роутеры/хендлеры aiogram v3
+from db import init_db       # инициализация БД (create_all)
 
-logging.basicConfig(level=logging.INFO)
-bot = Bot(BOT_TOKEN, parse_mode=ParseMode.HTML)
-dp = Dispatcher(); dp.include_router(router)
+# --- Конфиг ---
+BOT_WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "supersecret123")  # задай в Railway Variables
+PUBLIC_URL = os.getenv("PUBLIC_URL", "").rstrip("/")                # https://<имя>.up.railway.app
+WEBHOOK_PATH = f"/webhook/{BOT_WEBHOOK_SECRET}"
+WEBHOOK_URL = f"{PUBLIC_URL}{WEBHOOK_PATH}" if PUBLIC_URL else None
 
-async def reminder_worker():
-    await asyncio.sleep(5)
-    while True:
-        try:
-            async with SessionLocal() as s:
-                items = await due_reminders(s)
-                for r in items:
-                    try:
-                        await bot.send_message(r.chat_id, f"⏰ Напоминание: {r.task}")
-                        await mark_reminder_done(s, r.id)
-                    except Exception as e:
-                        logging.error("reminder send error: %s", e)
-                await s.commit()
-        except Exception as e:
-            logging.error("reminder loop: %s", e)
-        await asyncio.sleep(60)
+# --- FastAPI + aiogram ---
+app = FastAPI()
+bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
+dp = Dispatcher()
+dp.include_router(router)
 
-async def set_commands():
-    await bot.set_my_commands([BotCommand(command="start", description="Запуск бота")])
-
-async def main():
+@app.on_event("startup")
+async def on_startup():
+    # База
     await init_db()
-    await set_commands()
-    asyncio.create_task(reminder_worker())
-    await dp.start_polling(bot)
 
-if __name__ == "__main__":
-    asyncio.run(main())
+    # Чистим возможный старый вебхук
+    try:
+        await bot.delete_webhook(drop_pending_updates=True)
+    except Exception:
+        pass
+
+    # Ставим новый вебхук, если PUBLIC_URL задан
+    if WEBHOOK_URL:
+        await bot.set_webhook(url=WEBHOOK_URL, secret_token=BOT_WEBHOOK_SECRET)
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    await bot.session.close()
+
+# Получение апдейтов от Telegram
+@app.post(WEBHOOK_PATH)
+async def telegram_webhook(request: Request):
+    data = await request.json()
+    update = Update.model_validate(data)  # Pydantic v2 в aiogram3
+    await dp.feed_update(bot, update)
+    return {"ok": True}
+
+@app.get("/")
+async def health():
+    return {"status": "ok", "webhook": WEBHOOK_URL or "not set"}
