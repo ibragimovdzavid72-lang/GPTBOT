@@ -31,7 +31,8 @@ def rate_ok(uid: int) -> bool:
 
 @router.message(F.text == "/start")
 async def cmd_start(msg: Message):
-    await msg.answer("👋 Привет! Я мультибот (GPT‑4o): текст, картинки, голос и инструменты. Выбирай режим на клавиатуре ниже.", reply_markup=KB)
+    await msg.answer("👋 Привет! Я мультибот (GPT‑4o): текст, картинки, голос и инструменты. Выбирай режим на клавиатуре ниже.",
+ reply_markup=KB)
 
 @router.message(F.text == "ℹ️ Помощь")
 async def cmd_help(msg: Message):
@@ -88,7 +89,7 @@ async def on_voice(msg: Message):
         if not await moderate(text): await msg.answer("⚠️ Запрос отклонён модерацией."); return
         sess = await get_active_session(s, u)
         await append_message(s, sess.id, "user", text)
-        hist = await get_history(s, sess.id, 20)
+        hist = await get_history(s, sess.id, HISTORY_LIMIT)
         reply = await respond_text(hist + [{"role":"user","content":text}], use_tools=False)
         await append_message(s, sess.id, "assistant", reply or ""); await s.commit()
         if reply:
@@ -126,7 +127,7 @@ async def on_text(msg: Message):
             await msg.answer("⚠️ Лимит сообщений на сегодня исчерпан."); return
         if not await moderate(text): await msg.answer("⚠️ Запрос отклонён модерацией."); return
         await append_message(s, sess.id, "user", text)
-        hist = await get_history(s, sess.id, 20)
+        hist = await get_history(s, sess.id, HISTORY_LIMIT)
         await msg.bot.send_chat_action(chat_id, ChatAction.TYPING)
         use_tools = (mode == "tools")
         reply = await respond_text(hist + [{"role":"user","content":text}], use_tools=use_tools)
