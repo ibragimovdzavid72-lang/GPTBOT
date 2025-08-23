@@ -101,29 +101,42 @@ async def создать_таблицы_бд(пул):
     
     try:
         async with пул.acquire() as соединение:
-            # Создание таблицы пользователей сначала
-            await соединение.execute("""
-                CREATE TABLE IF NOT EXISTS пользователи (
-                    id SERIAL PRIMARY KEY,
-                    telegram_id BIGINT UNIQUE NOT NULL,
-                    имя VARCHAR(255),
-                    создан TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-            """)
-            
-            # Создание таблицы сообщений после таблицы пользователей с правильным foreign key
-            await соединение.execute("""
-                CREATE TABLE IF NOT EXISTS сообщения (
-                    id SERIAL PRIMARY KEY,
-                    пользователь_id INTEGER REFERENCES пользователи(id),
-                    текст TEXT,
-                    создано TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-            """)
-            
-        лог.info("✅ Таблицы базы данных созданы")
+            # Создаем все таблицы в одной транзакции
+            async with соединение.transaction():
+                # Сначала удаляем существующие таблицы если есть (для чистого создания)
+                await соединение.execute("DROP TABLE IF EXISTS сообщения CASCADE;")
+                await соединение.execute("DROP TABLE IF EXISTS пользователи CASCADE;")
+                
+                # Создание таблицы пользователей
+                await соединение.execute("""
+                    CREATE TABLE пользователи (
+                        id SERIAL PRIMARY KEY,
+                        telegram_id BIGINT UNIQUE NOT NULL,
+                        имя VARCHAR(255),
+                        создан TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                лог.info("✅ Таблица пользователи создана")
+                
+                # Создание таблицы сообщений с корректной ссылкой
+                await соединение.execute("""
+                    CREATE TABLE сообщения (
+                        id SERIAL PRIMARY KEY,
+                        пользователь_id INTEGER NOT NULL,
+                        текст TEXT,
+                        создано TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        CONSTRAINT fk_пользователь
+                            FOREIGN KEY (пользователь_id) 
+                            REFERENCES пользователи(id)
+                            ON DELETE CASCADE
+                    );
+                """)
+                лог.info("✅ Таблица сообщения создана")
+                
+        лог.info("✅ Все таблицы базы данных созданы успешно")
     except Exception as е:
         лог.error(f"❌ Ошибка создания таблиц: {е}")
+        лог.error(f"❌ Детали ошибки: {type(е).__name__}")
         лог.warning("⚠️ Продолжаем работу без базы данных")
 
 async def обработать_обновление_телеграм(обновление, pool=None):
