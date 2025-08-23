@@ -17,13 +17,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from config_ru import настройки
-from database_ru import МенеджерБазыДанных
+from database_ru import МенеджерБД
 from telegram_ru import ТелеграмКлиент
 from openai_ru import ОпенАИКлиент
 from handlers_ru import ОбработчикСообщений
 from payments_ru import МенеджерПлатежей
 from analytics_ru import АналитикаДвижок
-from admin_ru import АдминистраторБота
+from admin_ru import АдминПанель
 
 # Настройка логирования
 structlog.configure(
@@ -89,7 +89,7 @@ async def инициализировать_сервисы():
         # Инициализация сервисов
         менеджер_платежей = МенеджерПлатежей(телеграм_клиент, менеджер_бд)
         аналитика_движок = АналитикаДвижок(менеджер_бд) if настройки.функции.включить_аналитику else None
-        администратор = АдминистраторБота(телеграм_клиент, менеджер_бд, аналитика_движок)
+        администратор = АдминПанель(телеграм_клиент, менеджер_бд, аналитика_движок)
         
         # Главный обработчик с инновациями
         обработчик_сообщений = ОбработчикСообщений(
