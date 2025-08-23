@@ -36,7 +36,7 @@ class НастройкиБазыДанных(BaseSettings):
     макс_соединений: int = Field(20, env="DB_MAX_CONNECTIONS")
     таймаут_пула: int = Field(30, env="DB_POOL_TIMEOUT")
     
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
 class НастройкиТелеграм(BaseSettings):
@@ -58,7 +58,7 @@ class НастройкиТелеграм(BaseSettings):
             return ""
         return f"{self.ссылка_вебхука.rstrip('/')}{self.путь_вебхука}"
     
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
 class НастройкиОпенАИ(BaseSettings):
@@ -81,7 +81,7 @@ class НастройкиОпенАИ(BaseSettings):
     таймаут: int = Field(60, env="OPENAI_TIMEOUT")
     максимальных_повторов: int = Field(3, env="OPENAI_MAX_RETRIES")
     
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
 class НастройкиБезопасности(BaseSettings):
@@ -105,7 +105,7 @@ class НастройкиБезопасности(BaseSettings):
     включить_модерацию_контента: bool = Field(True, env="ENABLE_CONTENT_MODERATION")
     порог_модерации: float = Field(0.8, env="MODERATION_THRESHOLD")
     
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
 class НастройкиФункций(BaseSettings):
@@ -125,7 +125,7 @@ class НастройкиФункций(BaseSettings):
     включить_калькулятор: bool = Field(True, env="ENABLE_CALCULATOR")
     включить_переводчик: bool = Field(True, env="ENABLE_TRANSLATOR")
     
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
 class НастройкиВнешнихАПИ(BaseSettings):
@@ -136,8 +136,7 @@ class НастройкиВнешнихАПИ(BaseSettings):
     # Настройки Wikipedia
     язык_википедии: str = Field("ru", env="WIKIPEDIA_LANG")
     предложений_википедии: int = Field(3, env="WIKIPEDIA_SENTENCES")
-    
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
 class НастройкиПриложения(BaseSettings):
