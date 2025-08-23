@@ -36,8 +36,7 @@ class НастройкиБазыДанных(BaseSettings):
     макс_соединений: int = Field(20, env="DB_MAX_CONNECTIONS")
     таймаут_пула: int = Field(30, env="DB_POOL_TIMEOUT")
     
-    class Config:
-        env_prefix = "DB_"
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 
 class НастройкиТелеграм(BaseSettings):
@@ -59,8 +58,7 @@ class НастройкиТелеграм(BaseSettings):
             return ""
         return f"{self.ссылка_вебхука.rstrip('/')}{self.путь_вебхука}"
     
-    class Config:
-        env_prefix = "TELEGRAM_"
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 
 class НастройкиОпенАИ(BaseSettings):
@@ -83,8 +81,7 @@ class НастройкиОпенАИ(BaseSettings):
     таймаут: int = Field(60, env="OPENAI_TIMEOUT")
     максимальных_повторов: int = Field(3, env="OPENAI_MAX_RETRIES")
     
-    class Config:
-        env_prefix = "OPENAI_"
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 
 class НастройкиБезопасности(BaseSettings):
@@ -108,8 +105,7 @@ class НастройкиБезопасности(BaseSettings):
     включить_модерацию_контента: bool = Field(True, env="ENABLE_CONTENT_MODERATION")
     порог_модерации: float = Field(0.8, env="MODERATION_THRESHOLD")
     
-    class Config:
-        env_prefix = "SECURITY_"
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 
 class НастройкиФункций(BaseSettings):
@@ -129,8 +125,7 @@ class НастройкиФункций(BaseSettings):
     включить_калькулятор: bool = Field(True, env="ENABLE_CALCULATOR")
     включить_переводчик: bool = Field(True, env="ENABLE_TRANSLATOR")
     
-    class Config:
-        env_prefix = "FEATURES_"
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 
 class НастройкиВнешнихАПИ(BaseSettings):
@@ -142,8 +137,7 @@ class НастройкиВнешнихАПИ(BaseSettings):
     язык_википедии: str = Field("ru", env="WIKIPEDIA_LANG")
     предложений_википедии: int = Field(3, env="WIKIPEDIA_SENTENCES")
     
-    class Config:
-        env_prefix = "EXTERNAL_"
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 
 class НастройкиПриложения(BaseSettings):
@@ -176,13 +170,24 @@ class НастройкиПриложения(BaseSettings):
     интервал_аналитики: int = Field(300, env="ANALYTICS_INTERVAL")  # секунды
     интервал_обслуживания: int = Field(3600, env="MAINTENANCE_INTERVAL")  # секунды
     
-    # Под-конфигурации
-    база_данных: НастройкиБазыДанных = НастройкиБазыДанных()
-    телеграм: НастройкиТелеграм = НастройкиТелеграм()
-    опенаи: НастройкиОпенАИ = НастройкиОпенАИ()
-    безопасность: НастройкиБезопасности = НастройкиБезопасности()
-    функции: НастройкиФункций = НастройкиФункций()
-    внешние_апи: НастройкиВнешнихАПИ = НастройкиВнешнихАПИ()
+    # Под-конфигурации (инициализируются после создания основного объекта)
+    база_данных: Optional[НастройкиБазыДанных] = None
+    телеграм: Optional[НастройкиТелеграм] = None
+    опенаи: Optional[НастройкиОпенАИ] = None
+    безопасность: Optional[НастройкиБезопасности] = None
+    функции: Optional[НастройкиФункций] = None
+    внешние_апи: Optional[НастройкиВнешнихАПИ] = None
+    
+    def model_post_init(self, __context: Any) -> None:
+        """Инициализация подконфигураций."""
+        self.база_данных = НастройкиБазыДанных()
+        self.телеграм = НастройкиТелеграм()
+        self.опенаи = НастройкиОпенАИ()
+        self.безопасность = НастройкиБезопасности()
+        self.функции = НастройкиФункций()
+        self.внешние_апи = НастройкиВнешнихАПИ()
+    
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
     
     @validator("иды_админов", pre=True)
     def парсить_иды_админов(cls, v):
@@ -199,24 +204,6 @@ class НастройкиПриложения(BaseSettings):
         if isinstance(v, str):
             return [lang.strip() for lang in v.split(",") if lang.strip()]
         return v or ["ru", "en"]
-    
-    @property
-    def это_админ(self) -> callable:
-        """Проверить, является ли пользователь админом."""
-        def проверить(ид_пользователя: int) -> bool:
-            return ид_пользователя == self.ид_супер_админа or ид_пользователя in self.иды_админов
-        return проверить
-    
-    @property
-    def это_супер_админ(self) -> callable:
-        """Проверить, является ли пользователь супер админом."""
-        def проверить(ид_пользователя: int) -> bool:
-            return ид_пользователя == self.ид_супер_админа
-        return проверить
-    
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
 
 
 # Конфигурация тарифов подписки
