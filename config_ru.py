@@ -5,7 +5,19 @@
 тарифными планами и локализацией для русскоязычных пользователей.
 """
 
+# КРИТИЧНО: Загружаем .env ПЕРВЫМ ДЕЛОМ!
 import os
+from pathlib import Path
+try:
+    from dotenv import load_dotenv
+    # Принудительно загружаем .env ДО всех остальных импортов
+    env_file = Path(__file__).parent / ".env"
+    if env_file.exists():
+        load_dotenv(env_file, override=True)
+except ImportError:
+    pass
+
+# Теперь импортируем остальное
 from functools import lru_cache
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
