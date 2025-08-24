@@ -1,5 +1,6 @@
 """Simple FastAPI app for Railway deployment."""
 from fastapi import FastAPI
+import os
 
 app = FastAPI(title="Telegram AI Bot")
 
@@ -19,5 +20,5 @@ async def ping():
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
-    logger.info(f"Starting server on port {port}")
-    uvicorn.run("main:приложение", host="0.0.0.0", port=port, log_level="info")
+    print(f"Starting server on port {port}")
+    uvicorn.run("app:app", host="0.0.0.0", port=port, log_level="info")
