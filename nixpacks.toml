@@ -1,17 +1,15 @@
 [phases.setup]
-nixPkgs = ["python311", "postgresql"]
+nixPkgs = ["python311"]
 
 [phases.install]
 cmds = [
     "pip install --upgrade pip",
-    "pip install -r requirements.txt",
-    "pip list | grep uvicorn"
+    "pip install fastapi uvicorn"
 ]
 
 [phases.build]
 cmds = [
-    "echo 'Build phase completed'",
-    "python -c 'import uvicorn; print(f\"uvicorn version: {uvicorn.__version__}\")'"
+    "echo 'Build phase completed'"
 ]
 
 [start]
