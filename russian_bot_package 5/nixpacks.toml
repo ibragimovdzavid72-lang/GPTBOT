@@ -3,13 +3,16 @@ nixPkgs = ["python311", "postgresql"]
 
 [phases.install]
 cmds = [
-    "pip install -r requirements.txt"
+    "pip install --upgrade pip",
+    "pip install -r requirements.txt",
+    "pip list | grep uvicorn"
 ]
 
 [phases.build]
 cmds = [
-    "echo 'Build phase completed'"
+    "echo 'Build phase completed'",
+    "python -c 'import uvicorn; print(f\"uvicorn version: {uvicorn.__version__}\")'"
 ]
 
 [start]
-cmd = "uvicorn main_ru:приложение --host 0.0.0.0 --port $PORT"
+cmd = "python start.py"
