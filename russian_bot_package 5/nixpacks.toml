@@ -1,0 +1,15 @@
+[phases.setup]
+nixPkgs = ["python311", "postgresql"]
+
+[phases.install]
+cmds = [
+    "pip install -r requirements.txt"
+]
+
+[phases.build]
+cmds = [
+    "echo 'Build phase completed'"
+]
+
+[start]
+cmd = "uvicorn main_ru:приложение --host 0.0.0.0 --port $PORT"
