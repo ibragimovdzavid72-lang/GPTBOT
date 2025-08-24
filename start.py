@@ -67,24 +67,24 @@ def main():
     
     # Проверка импорта приложения
     try:
-        from app import app
-        print("✅ Приложение app:app импортировано успешно")
+        from main import приложение
+        print("✅ Приложение main:приложение импортировано успешно")
         logger.info("Приложение импортировано успешно")
     except ImportError as e:
-        print(f"❌ Ошибка импорта приложения app:app: {e}")
+        print(f"❌ Ошибка импорта приложения main:приложение: {e}")
         logger.error(f"Ошибка импорта: {e}")
         
         # Диагностика импорта
         try:
-            import app
-            print("✅ Модуль app найден")
-            if hasattr(app, 'app'):
-                print("✅ Атрибут 'app' найден")
+            import main
+            print("✅ Модуль main найден")
+            if hasattr(main, 'приложение'):
+                print("✅ Атрибут 'приложение' найден")
             else:
-                print("❌ Атрибут 'app' не найден в app")
-                print(f"Доступные атрибуты: {dir(app)}")
+                print("❌ Атрибут 'приложение' не найден в main")
+                print(f"Доступные атрибуты: {dir(main)}")
         except ImportError as ie:
-            print(f"❌ Модуль app не найден: {ie}")
+            print(f"❌ Модуль main не найден: {ie}")
         
         sys.exit(1)
     
@@ -106,7 +106,7 @@ def main():
     # Запуск приложения
     try:
         uvicorn.run(
-            "app:app",
+            "main:приложение",
             host="0.0.0.0",
             port=port,
             log_level="info",
@@ -118,4 +118,4 @@ def main():
         sys.exit(1)
 
 if __name__ == "__main__":
-    main()
+    main()м
