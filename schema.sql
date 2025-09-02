@@ -15,3 +15,9 @@ CREATE TABLE IF NOT EXISTS logs (
     answer TEXT,                              -- Ответ бота
     created_at TIMESTAMP DEFAULT now()        -- Время создания записи
 );
+
+-- Таблица статуса бота
+CREATE TABLE IF NOT EXISTS bot_status (
+    id SERIAL PRIMARY KEY,
+    is_active BOOLEAN DEFAULT TRUE
+);
