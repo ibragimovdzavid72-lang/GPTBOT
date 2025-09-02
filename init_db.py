@@ -16,11 +16,11 @@ import os
 # Получаем DATABASE_URL из переменных окружения
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-async def main():
-    """Основная функция для создания таблиц в базе данных."""
+async def initialize_database():
+    """Инициализация базы данных - создание таблиц если они не существуют."""
     if not DATABASE_URL:
         print("❌ Переменная окружения DATABASE_URL не установлена")
-        return
+        return False
     
     try:
         # Подключаемся к базе данных
@@ -40,7 +40,7 @@ async def main():
         if tables_exist:
             print("✅ Таблицы уже существуют в базе данных")
             await conn.close()
-            return
+            return True
         
         # Читаем SQL-скрипт
         print("📖 Чтение schema.sql...")
@@ -50,32 +50,44 @@ async def main():
         except FileNotFoundError:
             print("❌ Файл schema.sql не найден")
             await conn.close()
-            return
+            return False
         except Exception as e:
             print(f"❌ Ошибка при чтении schema.sql: {e}")
             await conn.close()
-            return
+            return False
         
         # Выполняем SQL-скрипт
         print("⚙️ Выполнение SQL-скрипта...")
         # Разделяем скрипт на отдельные команды по точке с запятой
         commands = sql_script.split(";")
         
+        success_count = 0
         for i, command in enumerate(commands):
             command = command.strip()
             if command:
                 try:
                     await conn.execute(command)
                     print(f"✅ Выполнена команда {i+1}: {command[:50]}...")
+                    success_count += 1
                 except Exception as e:
                     print(f"⚠️ Ошибка при выполнении команды {i+1}: {command[:50]}... Ошибка: {e}")
         
         # Закрываем соединение
         await conn.close()
-        print("✅ Таблицы успешно созданы!")
+        print(f"✅ Таблицы успешно созданы! Успешно выполнено команд: {success_count}")
+        return True
         
     except Exception as e:
         print(f"❌ Ошибка при инициализации базы данных: {e}")
+        return False
+
+async def main():
+    """Основная функция для создания таблиц в базе данных."""
+    success = await initialize_database()
+    if success:
+        print("\n🎉 Инициализация базы данных завершена успешно!")
+    else:
+        print("\n💥 Инициализация базы данных завершена с ошибками!")
 
 if __name__ == "__main__":
     asyncio.run(main())
