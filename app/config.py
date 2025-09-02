@@ -15,8 +15,8 @@ class Settings:
     TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
     # Ключ доступа к OpenAI API
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
-    # Модель OpenAI для генерации ответов (по умолчанию gpt-3.5-turbo)
-    OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
+    # Модель OpenAI для генерации ответов (по умолчанию gpt-4o)
+    OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o")
     # Параметр temperature для OpenAI (степень креативности ответа)
     TEMPERATURE: float = float(os.getenv("TEMPERATURE", "0.8"))
     # Тайм‑аут запросов к OpenAI, секунды
