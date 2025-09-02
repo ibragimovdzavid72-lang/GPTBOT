@@ -105,14 +105,20 @@ This bot is ready for deployment on platforms that support Procfile-based applic
 3. Add environment variables from the `.env.example` file
 4. Add a PostgreSQL database through Railway
 5. Copy the database connection string from the Postgres variables (DATABASE_URL) to your application's environment variables (GPTBOT → Variables)
-6. Create the database tables by running the initialization script:
+6. Create the database tables using one of the following methods:
+
+   **Method 1: Using the initialization script (recommended)**
    ```bash
    python init_db.py
    ```
-   Or execute the command in the terminal:
+   
+   **Method 2: Using Railway terminal**
    ```bash
    psql "postgresql://USER:PASSWORD@HOST:5432/railway" -f schema.sql
    ```
+   
+   **Important:** Railway Postgres is only accessible from within Railway (via postgres.railway.internal). Local testing will not work - the connection will be refused.
+
 7. Deploy the application
 
 ### Database Initialization
@@ -124,6 +130,8 @@ python init_db.py
 ```
 
 This script connects to the database specified in the DATABASE_URL environment variable and executes the SQL script from the `schema.sql` file, creating the `logs` and `bot_config` tables.
+
+**Important:** If the tables already exist, the script will not attempt to recreate them.
 
 ## Project Structure
 
