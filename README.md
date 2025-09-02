@@ -8,6 +8,7 @@ A Telegram bot powered by OpenAI's GPT models with advanced features including p
 - Prompt suggestion capability with `/suggest_prompt` command
 - Interaction logging to PostgreSQL database
 - Image generation with `/art` command
+- Image analysis using OpenAI Vision API
 - Interactive menu with quick access buttons
 - Statistics viewing with `/stats` command
 - Help information with `/help` command
@@ -15,6 +16,9 @@ A Telegram bot powered by OpenAI's GPT models with advanced features including p
 - Personalized greetings for users
 - AI model selection via `/mode` command
 - Configurable through environment variables
+- Voice message recognition (speech-to-text)
+- Voice responses (text-to-speech)
+- Dialog context memory and history
 - Ready for deployment on platforms like Heroku or Railway
 
 ## Prerequisites
@@ -82,8 +86,15 @@ After starting the bot, you can use the following commands:
 - `/stats` - Show usage statistics
 - `/suggest_prompt` - Get a prompt suggestion based on interaction history
 - `/art` - Create an image based on a description
-- `/mode MODEL` - Change AI model (e.g., `/mode gpt-4o`)
+- `/mode` - Change AI model via interactive menu
 - `/reset_context` - Reset dialog context
+- `/tts` - Manage voice responses (text-to-speech) via interactive menu
+- `/history` - View dialog history
+
+The bot also supports:
+- Automatic image generation when you use keywords like "нарисуй", "картинку", etc.
+- Voice message recognition - just send a voice message and the bot will transcribe it
+- Voice responses - enable TTS in settings to get voice replies
 
 ### Admin Commands
 
@@ -99,8 +110,7 @@ Administrators also have access to a special "👑 Admin Panel" button in the ma
 
 The main menu includes buttons:
 - 📊 Statistics - View usage statistics
-- 🎨 Create Art - Image generation feature
-- ⚙️ Settings - Bot settings (in development)
+- ⚙️ Settings - Bot settings with interactive menus
 - 🧠 Smart Chat - AI conversation mode
 
 ## Documentation (Russian)
