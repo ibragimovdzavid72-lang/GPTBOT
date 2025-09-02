@@ -57,3 +57,24 @@ async def openai_chat_with_history(system_prompt: str, messages: list) -> str:
         return response.choices[0].message.content.strip()
     except Exception as e:
         raise Exception(f"Ошибка при вызове OpenAI API: {str(e)}")
+
+
+async def openai_image(prompt: str) -> str:
+    """
+    Генерирует изображение с помощью модели DALL-E от OpenAI.
+
+    :param prompt: Описание изображения для генерации.
+    :return: URL сгенерированного изображения.
+    :raises Exception: При ошибке взаимодействия с API.
+    """
+    try:
+        response = await client.images.generate(
+            model="dall-e-3",
+            prompt=prompt,
+            size="1024x1024",
+            quality="standard",
+            n=1,
+        )
+        return response.data[0].url
+    except Exception as e:
+        raise Exception(f"Ошибка при генерации изображения: {str(e)}")
