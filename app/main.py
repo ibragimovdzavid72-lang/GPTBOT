@@ -9,10 +9,11 @@ PostgreSQL. Он подключается к OpenAI через модуль ai �
 
 import asyncio
 import logging
+from datetime import datetime
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandObject
 from aiogram.client.default import DefaultBotProperties
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import asyncpg
@@ -20,7 +21,7 @@ import asyncpg
 from .config import settings
 from .suggest import generate_prompt_from_logs
 from .ai import openai_chat, openai_image
-
+from .admin import is_admin, cmd_admin_stats, cmd_errors, cmd_bot_on, cmd_bot_off, is_bot_active
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -49,7 +50,9 @@ DEFAULT_SYSTEM_PROMPT = (
 
 # Текст приветствия
 WELCOME_TEXT = """
-Добро пожаловать!
+Добро пожаловать, {username}!
+Сегодня {date}, ваш лимит: 20 запросов
+
 🧠 Ваш AI Agent
 
 🤖 Мультимодельный AI (GPT-4o)
@@ -69,10 +72,10 @@ WELCOME_TEXT = """
 
 # Создание главного меню с кнопками
 main_menu = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="🧠 Умный чат", callback_data="chat")],
-    [InlineKeyboardButton(text="🎨 Создать арт", callback_data="art")],
     [InlineKeyboardButton(text="📊 Статистика", callback_data="stats")],
-    [InlineKeyboardButton(text="❓ Помощь", callback_data="help")],
+    [InlineKeyboardButton(text="🎨 Создать арт", callback_data="art")],
+    [InlineKeyboardButton(text="⚙️ Настройки", callback_data="settings")],
+    [InlineKeyboardButton(text="🧠 Умный чат", callback_data="chat")],
 ])
 
 
@@ -133,7 +136,12 @@ async def on_shutdown() -> None:
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message) -> None:
     """Обработчик команды /start."""
-    await message.answer(WELCOME_TEXT, reply_markup=main_menu)
+    # Формируем персонализированное приветствие
+    username = message.from_user.username or message.from_user.first_name or "Пользователь"
+    current_date = datetime.now().strftime("%d.%m.%Y")
+    
+    welcome_text = WELCOME_TEXT.format(username=username, date=current_date)
+    await message.answer(welcome_text, reply_markup=main_menu)
 
 
 @dp.message(Command("help"))
@@ -257,9 +265,54 @@ async def process_callback(callback_query: types.CallbackQuery) -> None:
     elif callback_query.data == "stats":
         # Вызываем обработчик команды /stats
         await cmd_stats(callback_query.message)
+    elif callback_query.data == "settings":
+        await callback_query.message.answer("⚙️ Настройки бота (в разработке)")
     elif callback_query.data == "help":
         # Вызываем обработчик команды /help
         await cmd_help(callback_query.message)
+
+
+@dp.message(Command("admin_stats"))
+async def cmd_admin_stats_handler(message: types.Message) -> None:
+    """Обработчик команды /admin_stats."""
+    await cmd_admin_stats(message, pool)
+
+
+@dp.message(Command("errors"))
+async def cmd_errors_handler(message: types.Message) -> None:
+    """Обработчик команды /errors."""
+    await cmd_errors(message, pool)
+
+
+@dp.message(Command("bot_on"))
+async def cmd_bot_on_handler(message: types.Message) -> None:
+    """Обработчик команды /bot_on."""
+    await cmd_bot_on(message, pool)
+
+
+@dp.message(Command("bot_off"))
+async def cmd_bot_off_handler(message: types.Message) -> None:
+    """Обработчик команды /bot_off."""
+    await cmd_bot_off(message, pool)
+
+
+@dp.message(Command("mode"))
+async def cmd_mode(message: types.Message, command: CommandObject) -> None:
+    """Обработчик команды /mode для изменения модели AI."""
+    if not command.args:
+        await message.answer("Укажите модель, например: /mode gpt-4o")
+        return
+    
+    model = command.args.strip()
+    allowed_models = ["gpt-3.5-turbo", "gpt-4", "gpt-4o", "gpt-4-turbo"]
+    
+    if model not in allowed_models:
+        await message.answer(f"Недопустимая модель. Доступные модели: {', '.join(allowed_models)}")
+        return
+    
+    # Здесь можно реализовать сохранение выбора модели пользователем
+    # Пока просто сообщаем о возможности изменения
+    await message.answer(f"Модель изменена на: {model}\n(Функция в разработке)")
 
 
 @dp.message()
@@ -267,6 +320,11 @@ async def handle_message(message: types.Message) -> None:
     """Обработчик всех текстовых сообщений."""
     # Игнорируем сообщения без текста
     if not message.text:
+        return
+    
+    # Проверяем, активен ли бот
+    if not await is_bot_active(pool):
+        await message.answer("⛔ Бот временно отключён администратором.")
         return
     
     text = message.text.lower()
