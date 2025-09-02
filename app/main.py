@@ -115,7 +115,7 @@ async def on_startup() -> None:
                 logger.error(f"Ошибка при проверке или создании таблиц: {e}")
     except Exception as e:
         pool = None
-        logger.error(f"Не удалось подключиться к базе данных: {e})
+        logger.error(f"Не удалось подключиться к базе данных: {e}")
 
 
 async def on_shutdown() -> None:
