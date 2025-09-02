@@ -47,6 +47,26 @@ DEFAULT_SYSTEM_PROMPT = (
     "- Общайся живо, иногда добавляй смайлы 🙂."
 )
 
+# Текст приветствия
+WELCOME_TEXT = """
+Добро пожаловать!
+🧠 Ваш AI Agent
+
+🤖 Мультимодельный AI (GPT-4o)
+• 🎨 Генерация изображений  
+• 📊 Продвинутая аналитика
+• 💎 Персонализация
+
+💫 Начните прямо сейчас:
+Просто напишите любой вопрос и испытайте мощь современного AI!
+
+🎯 Команды:
+/help - Подробная помощь
+/stats - Ваша статистика
+/suggest_prompt - Улучшенный промпт
+/art - Создать изображение
+"""
+
 # Создание главного меню с кнопками
 main_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="🧠 Умный чат", callback_data="chat")],
@@ -65,32 +85,37 @@ async def on_startup() -> None:
         
         # Применение схемы базы данных
         async with pool.acquire() as conn:
-            # Проверяем существование таблиц
-            tables_exist = await conn.fetchval("""
-                SELECT EXISTS (
-                    SELECT FROM information_schema.tables 
-                    WHERE table_name = 'logs' OR table_name = 'bot_config'
-                )
-            """)
-            
-            if not tables_exist:
-                # Читаем и выполняем schema.sql
-                with open("schema.sql", "r", encoding="utf-8") as f:
-                    schema_sql = f.read()
-                    # Разделяем SQL команды по точке с запятой
-                    commands = schema_sql.split(";")
-                    for command in commands:
-                        command = command.strip()
-                        if command:
-                            try:
-                                await conn.execute(command)
-                            except Exception as e:
-                                logger.warning(f"Не удалось выполнить команду: {command[:50]}... Ошибка: {e}")
+            try:
+                # Проверяем существование таблиц
+                tables_exist = await conn.fetchval("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables 
+                        WHERE table_name = 'logs' OR table_name = 'bot_config'
+                    )
+                """)
                 
-                logger.info("Схема базы данных успешно применена")
+                if not tables_exist:
+                    # Читаем и выполняем schema.sql
+                    with open("schema.sql", "r", encoding="utf-8") as f:
+                        schema_sql = f.read()
+                        # Разделяем SQL команды по точке с запятой
+                        commands = schema_sql.split(";")
+                        for command in commands:
+                            command = command.strip()
+                            if command:
+                                try:
+                                    await conn.execute(command)
+                                except Exception as e:
+                                    logger.warning(f"Не удалось выполнить команду: {command[:50]}... Ошибка: {e}")
+                    
+                    logger.info("Схема базы данных успешно применена")
+                else:
+                    logger.info("Таблицы уже существуют в базе данных")
+            except Exception as e:
+                logger.error(f"Ошибка при проверке или создании таблиц: {e}")
     except Exception as e:
         pool = None
-        logger.error(f"Не удалось подключиться к базе данных: {e}")
+        logger.error(f"Не удалось подключиться к базе данных: {e})
 
 
 async def on_shutdown() -> None:
@@ -104,10 +129,7 @@ async def on_shutdown() -> None:
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message) -> None:
     """Обработчик команды /start."""
-    await message.answer(
-        "🤖 Добро пожаловать!\nВыберите действие:",
-        reply_markup=main_menu
-    )
+    await message.answer(WELCOME_TEXT, reply_markup=main_menu)
 
 
 @dp.message(Command("help"))
@@ -174,6 +196,7 @@ async def cmd_suggest_prompt(message: types.Message) -> None:
         await message.answer("❌ Нет подключения к базе данных.")
         return
     try:
+        await message.answer("🔍 Анализирую последние запросы для предложения улучшенного промпта...")
         suggestion = await generate_prompt_from_logs(pool)
         await message.answer(f"💡 <b>Предложенный промпт:</b>\n\n{suggestion}")
     except Exception as e:
@@ -235,6 +258,34 @@ async def handle_message(message: types.Message) -> None:
     # Игнорируем сообщения без текста
     if not message.text:
         return
+    
+    text = message.text.lower()
+    
+    # Если пользователь явно просит "нарисуй", "сделай картинку", "создай арт"
+    image_keywords = ["картинку", "изображение", "нарисуй", "арт", "картина", "рисунок", "фото", "изобрази"]
+    if any(word in text for word in image_keywords):
+        try:
+            # Генерируем изображение через OpenAI
+            image_url = await openai_image(message.text)
+            # Отправляем изображение пользователю
+            await message.answer_photo(image_url, caption=f"✨ Вот что получилось!")
+            
+            # Записываем взаимодействие в базу
+            if pool:
+                async with pool.acquire() as conn:
+                    await conn.execute(
+                        "INSERT INTO logs (username, command, args, answer) VALUES ($1, $2, $3, $4)",
+                        message.from_user.username,
+                        "auto_art",
+                        message.text,
+                        f"Сгенерировано изображение: {image_url}",
+                    )
+            return
+        except Exception as e:
+            logger.error(f"Ошибка при генерации изображения: {e}")
+            await message.answer("❌ Извините, произошла ошибка при генерации изображения.")
+            return
+    
     try:
         # Получаем ответ от OpenAI
         response = await openai_chat(DEFAULT_SYSTEM_PROMPT, message.text)
