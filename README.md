@@ -7,6 +7,7 @@ A Telegram bot powered by OpenAI's GPT models with advanced features including p
 - AI-powered conversations using OpenAI GPT models
 - Prompt suggestion capability with `/suggest_prompt` command
 - Interaction logging to PostgreSQL database
+- Image generation with `/art` command
 - Interactive menu with quick access buttons
 - Statistics viewing with `/stats` command
 - Help information with `/help` command
@@ -60,7 +61,7 @@ Create a `.env` file in the project root with the following variables:
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token
 OPENAI_API_KEY=your_openai_api_key
 DATABASE_URL=postgresql://postgres:password@localhost:5432/telegram_bot
-OPENAI_MODEL=gpt-3.5-turbo
+OPENAI_MODEL=gpt-4o
 TEMPERATURE=0.8
 REQUEST_TIMEOUT=30
 MAX_TG_REPLY=3500
@@ -76,10 +77,11 @@ After starting the bot, you can use the following commands:
 - `/help` - Show help information
 - `/stats` - Show usage statistics
 - `/suggest_prompt` - Get a prompt suggestion based on interaction history
+- `/art` - Create an image based on a description
 
 The main menu includes buttons:
 - 🧠 Smart Chat - AI conversation mode
-- 🎨 Create Art - Image generation feature (in development)
+- 🎨 Create Art - Image generation feature
 - 📊 Statistics - View usage statistics
 - ❓ Help - Help information
 
@@ -102,10 +104,14 @@ This bot is ready for deployment on platforms that support Procfile-based applic
 2. Connect your GitHub repository or upload the code manually
 3. Add environment variables from the `.env.example` file
 4. Add a PostgreSQL database through Railway
-5. Copy the database connection string (DATABASE_URL) to your application's environment variables
+5. Copy the database connection string from the Postgres variables (DATABASE_URL) to your application's environment variables (GPTBOT → Variables)
 6. Create the database tables by running the initialization script:
    ```bash
    python init_db.py
+   ```
+   Or execute the command in the terminal:
+   ```bash
+   psql "postgresql://USER:PASSWORD@HOST:5432/railway" -f schema.sql
    ```
 7. Deploy the application
 
