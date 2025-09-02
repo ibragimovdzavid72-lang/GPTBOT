@@ -113,9 +113,13 @@ async def on_startup() -> None:
                     logger.info("Таблицы уже существуют в базе данных")
             except Exception as e:
                 logger.error(f"Ошибка при проверке или создании таблиц: {e}")
+                # Продолжаем работу даже если не удалось создать таблицы
+                logger.warning("Продолжаем работу бота без таблиц БД")
     except Exception as e:
         pool = None
         logger.error(f"Не удалось подключиться к базе данных: {e}")
+        # Продолжаем работу даже если нет подключения к БД
+        logger.warning("Продолжаем работу бота без подключения к БД")
 
 
 async def on_shutdown() -> None:
@@ -151,7 +155,7 @@ async def cmd_help(message: types.Message) -> None:
 async def cmd_stats(message: types.Message) -> None:
     """Обработчик команды /stats."""
     if not pool:
-        await message.answer("⛔ База данных недоступна")
+        await message.answer("⛔ База данных недоступна. Статистика временно недоступна.")
         return
     
     try:
@@ -186,14 +190,14 @@ async def cmd_stats(message: types.Message) -> None:
         await message.answer(stats_text)
     except Exception as e:
         logger.error(f"Ошибка при получении статистики: {e}")
-        await message.answer("❌ Произошла ошибка при получении статистики.")
+        await message.answer("❌ Произошла ошибка при получении статистики. Попробуйте позже.")
 
 
 @dp.message(Command("suggest_prompt"))
 async def cmd_suggest_prompt(message: types.Message) -> None:
     """Обработчик команды /suggest_prompt для генерации улучшенного промпта."""
     if not pool:
-        await message.answer("❌ Нет подключения к базе данных.")
+        await message.answer("❌ Нет подключения к базе данных. Функция предложения промпта временно недоступна.")
         return
     try:
         await message.answer("🔍 Анализирую последние запросы для предложения улучшенного промпта...")
@@ -201,7 +205,7 @@ async def cmd_suggest_prompt(message: types.Message) -> None:
         await message.answer(f"💡 <b>Предложенный промпт:</b>\n\n{suggestion}")
     except Exception as e:
         logger.error(f"Ошибка в suggest_prompt: {e}")
-        await message.answer("❌ Извините, не удалось сгенерировать предложение сейчас.")
+        await message.answer("❌ Извините, не удалось сгенерировать предложение сейчас. Попробуйте позже.")
 
 
 @dp.message(Command("art"))
@@ -222,14 +226,20 @@ async def cmd_art(message: types.Message) -> None:
         
         # Записываем взаимодействие в базу
         if pool:
-            async with pool.acquire() as conn:
-                await conn.execute(
-                    "INSERT INTO logs (username, command, args, answer) VALUES ($1, $2, $3, $4)",
-                    message.from_user.username,
-                    "art",
-                    text,
-                    f"Сгенерировано изображение: {image_url}",
-                )
+            try:
+                async with pool.acquire() as conn:
+                    await conn.execute(
+                        "INSERT INTO logs (username, command, args, answer) VALUES ($1, $2, $3, $4)",
+                        message.from_user.username,
+                        "art",
+                        text,
+                        f"Сгенерировано изображение: {image_url}",
+                    )
+            except Exception as e:
+                logger.error(f"Ошибка при записи в базу данных: {e}")
+                # Продолжаем работу, даже если не удалось записать в БД
+        else:
+            logger.warning("Нет подключения к базе данных, пропускаем запись лога")
     except Exception as e:
         logger.error(f"Ошибка при генерации изображения: {e}")
         await message.answer("❌ Извините, произошла ошибка при генерации изображения.")
@@ -272,14 +282,20 @@ async def handle_message(message: types.Message) -> None:
             
             # Записываем взаимодействие в базу
             if pool:
-                async with pool.acquire() as conn:
-                    await conn.execute(
-                        "INSERT INTO logs (username, command, args, answer) VALUES ($1, $2, $3, $4)",
-                        message.from_user.username,
-                        "auto_art",
-                        message.text,
-                        f"Сгенерировано изображение: {image_url}",
-                    )
+                try:
+                    async with pool.acquire() as conn:
+                        await conn.execute(
+                            "INSERT INTO logs (username, command, args, answer) VALUES ($1, $2, $3, $4)",
+                            message.from_user.username,
+                            "auto_art",
+                            message.text,
+                            f"Сгенерировано изображение: {image_url}",
+                        )
+                except Exception as e:
+                    logger.error(f"Ошибка при записи в базу данных: {e}")
+                    # Продолжаем работу, даже если не удалось записать в БД
+            else:
+                logger.warning("Нет подключения к базе данных, пропускаем запись лога")
             return
         except Exception as e:
             logger.error(f"Ошибка при генерации изображения: {e}")
@@ -296,14 +312,20 @@ async def handle_message(message: types.Message) -> None:
         await message.answer(response)
         # Записываем взаимодействие в базу
         if pool:
-            async with pool.acquire() as conn:
-                await conn.execute(
-                    "INSERT INTO logs (username, command, args, answer) VALUES ($1, $2, $3, $4)",
-                    message.from_user.username,
-                    "message",
-                    message.text,
-                    response,
-                )
+            try:
+                async with pool.acquire() as conn:
+                    await conn.execute(
+                        "INSERT INTO logs (username, command, args, answer) VALUES ($1, $2, $3, $4)",
+                        message.from_user.username,
+                        "message",
+                        message.text,
+                        response,
+                    )
+            except Exception as e:
+                logger.error(f"Ошибка при записи в базу данных: {e}")
+                # Продолжаем работу, даже если не удалось записать в БД
+        else:
+            logger.warning("Нет подключения к базе данных, пропускаем запись лога")
     except Exception as e:
         logger.error(f"Ошибка обработки сообщения: {e}")
         await message.answer("❌ Извините, произошла ошибка при обработке вашего сообщения.")
