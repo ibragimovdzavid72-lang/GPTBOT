@@ -83,6 +83,7 @@ After starting the bot, you can use the following commands:
 - `/suggest_prompt` - Get a prompt suggestion based on interaction history
 - `/art` - Create an image based on a description
 - `/mode MODEL` - Change AI model (e.g., `/mode gpt-4o`)
+- `/reset_context` - Reset dialog context
 
 ### Admin Commands
 
