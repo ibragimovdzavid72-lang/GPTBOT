@@ -70,12 +70,21 @@ WELCOME_TEXT = """
 /art - Создать изображение
 """
 
-# Создание главного меню с кнопками
+# Создание главного меню с кнопками (без админ-панели по умолчанию)
 main_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="📊 Статистика", callback_data="stats")],
     [InlineKeyboardButton(text="🎨 Создать арт", callback_data="art")],
     [InlineKeyboardButton(text="⚙️ Настройки", callback_data="settings")],
     [InlineKeyboardButton(text="🧠 Умный чат", callback_data="chat")],
+])
+
+# Создание расширенного меню с админ-панелью для администраторов
+admin_menu = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="📊 Статистика", callback_data="stats")],
+    [InlineKeyboardButton(text="🎨 Создать арт", callback_data="art")],
+    [InlineKeyboardButton(text="⚙️ Настройки", callback_data="settings")],
+    [InlineKeyboardButton(text="🧠 Умный чат", callback_data="chat")],
+    [InlineKeyboardButton(text="👑 Админ-панель", callback_data="admin_panel")],
 ])
 
 
@@ -93,24 +102,24 @@ async def on_startup() -> None:
                 tables_exist = await conn.fetchval("""
                     SELECT EXISTS (
                         SELECT FROM information_schema.tables 
-                        WHERE table_name = 'logs' OR table_name = 'bot_config'
+                        WHERE table_name IN ('logs', 'bot_config', 'bot_status')
                     )
                 """)
                 
+                # Читаем и выполняем schema.sql
+                with open("schema.sql", "r", encoding="utf-8") as f:
+                    schema_sql = f.read()
+                    # Разделяем SQL команды по точке с запятой
+                    commands = schema_sql.split(";")
+                    for command in commands:
+                        command = command.strip()
+                        if command:
+                            try:
+                                await conn.execute(command)
+                            except Exception as e:
+                                logger.warning(f"Не удалось выполнить команду: {command[:50]}... Ошибка: {e}")
+                
                 if not tables_exist:
-                    # Читаем и выполняем schema.sql
-                    with open("schema.sql", "r", encoding="utf-8") as f:
-                        schema_sql = f.read()
-                        # Разделяем SQL команды по точке с запятой
-                        commands = schema_sql.split(";")
-                        for command in commands:
-                            command = command.strip()
-                            if command:
-                                try:
-                                    await conn.execute(command)
-                                except Exception as e:
-                                    logger.warning(f"Не удалось выполнить команду: {command[:50]}... Ошибка: {e}")
-                    
                     logger.info("Схема базы данных успешно применена")
                 else:
                     logger.info("Таблицы уже существуют в базе данных")
@@ -141,7 +150,12 @@ async def cmd_start(message: types.Message) -> None:
     current_date = datetime.now().strftime("%d.%m.%Y")
     
     welcome_text = WELCOME_TEXT.format(username=username, date=current_date)
-    await message.answer(welcome_text, reply_markup=main_menu)
+    
+    # Показываем расширенное меню для администраторов
+    if is_admin(message.from_user.id):
+        await message.answer(welcome_text, reply_markup=admin_menu)
+    else:
+        await message.answer(welcome_text, reply_markup=main_menu)
 
 
 @dp.message(Command("help"))
@@ -156,6 +170,18 @@ async def cmd_help(message: types.Message) -> None:
         "/art - Создать изображение по описанию\n\n"
         "Используйте кнопки меню для быстрого доступа к функциям."
     )
+    
+    # Добавляем информацию об админских командах для администраторов
+    if is_admin(message.from_user.id):
+        help_text += (
+            "\n\n👑 <b>Админ-команды:</b>\n"
+            "/admin - Админ-панель\n"
+            "/admin_stats - Статистика бота\n"
+            "/errors - Последние ошибки\n"
+            "/bot_on - Включить бота\n"
+            "/bot_off - Выключить бота"
+        )
+    
     await message.answer(help_text)
 
 
@@ -270,6 +296,21 @@ async def process_callback(callback_query: types.CallbackQuery) -> None:
     elif callback_query.data == "help":
         # Вызываем обработчик команды /help
         await cmd_help(callback_query.message)
+    elif callback_query.data == "admin_panel":
+        # Проверяем, является ли пользователь администратором
+        if is_admin(callback_query.from_user.id):
+            admin_panel_text = (
+                "👑 <b>Админ-панель</b>\n\n"
+                "Доступные команды:\n"
+                "/admin_stats - Статистика бота\n"
+                "/errors - Последние ошибки\n"
+                "/bot_on - Включить бота\n"
+                "/bot_off - Выключить бота\n\n"
+                "Используйте эти команды для управления ботом."
+            )
+            await callback_query.message.answer(admin_panel_text)
+        else:
+            await callback_query.message.answer("⛔ У вас нет доступа к админ-панели.")
 
 
 @dp.message(Command("admin_stats"))
@@ -315,6 +356,25 @@ async def cmd_mode(message: types.Message, command: CommandObject) -> None:
     await message.answer(f"Модель изменена на: {model}\n(Функция в разработке)")
 
 
+@dp.message(Command("admin"))
+async def cmd_admin(message: types.Message) -> None:
+    """Обработчик команды /admin для доступа к админ-панели."""
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ У вас нет доступа к админ-панели.")
+        return
+    
+    admin_panel_text = (
+        "👑 <b>Админ-панель</b>\n\n"
+        "Доступные команды:\n"
+        "/admin_stats - Статистика бота\n"
+        "/errors - Последние ошибки\n"
+        "/bot_on - Включить бота\n"
+        "/bot_off - Выключить бота\n\n"
+        "Используйте эти команды для управления ботом."
+    )
+    await message.answer(admin_panel_text)
+
+
 @dp.message()
 async def handle_message(message: types.Message) -> None:
     """Обработчик всех текстовых сообщений."""
@@ -350,7 +410,7 @@ async def handle_message(message: types.Message) -> None:
                             f"Сгенерировано изображение: {image_url}",
                         )
                 except Exception as e:
-                    logger.error(f"Ошибка при записи в базу данных: {e}")
+                    logger.error(f"Ошибка при записи записи в базу данных: {e}")
                     # Продолжаем работу, даже если не удалось записать в БД
             else:
                 logger.warning("Нет подключения к базе данных, пропускаем запись лога")
