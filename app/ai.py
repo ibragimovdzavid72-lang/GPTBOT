@@ -4,6 +4,7 @@
 клиент OpenAI для эффективной работы.
 """
 
+import base64
 import openai
 from .config import settings
 
@@ -80,3 +81,79 @@ async def openai_image(prompt: str) -> str:
         return response.data[0].url
     except Exception as e:
         raise Exception(f"Ошибка при генерации изображения: {str(e)}")
+
+
+async def openai_vision(image_path: str, prompt: str = "Что изображено на картинке?") -> str:
+    """
+    Анализирует изображение с помощью модели Vision от OpenAI.
+
+    :param image_path: Путь к изображению для анализа.
+    :param prompt: Вопрос о изображении (по умолчанию общий вопрос).
+    :return: Ответ модели о содержимом изображения.
+    :raises Exception: При ошибке взаимодействия с API.
+    """
+    try:
+        # Открываем и кодируем изображение в base64
+        with open(image_path, "rb") as image_file:
+            base64_image = base64.b64encode(image_file.read()).decode('utf-8')
+        
+        response = await client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{base64_image}"
+                            }
+                        }
+                    ]
+                }
+            ],
+            max_tokens=300
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        raise Exception(f"Ошибка при анализе изображения: {str(e)}")
+
+
+async def openai_tts(text: str, voice: str = "alloy") -> bytes:
+    """
+    Преобразует текст в речь с помощью OpenAI TTS.
+
+    :param text: Текст для преобразования в речь.
+    :param voice: Голос для синтеза речи (alloy, echo, fable, onyx, nova, shimmer).
+    :return: Аудиоданные в формате bytes.
+    :raises Exception: При ошибке взаимодействия с API.
+    """
+    try:
+        response = await client.audio.speech.create(
+            model="tts-1",
+            voice=voice,
+            input=text
+        )
+        return response.content
+    except Exception as e:
+        raise Exception(f"Ошибка при синтезе речи: {str(e)}")
+
+
+async def openai_stt(audio_path: str) -> str:
+    """
+    Преобразует аудио в текст с помощью OpenAI Whisper.
+
+    :param audio_path: Путь к аудиофайлу для распознавания.
+    :return: Распознанный текст.
+    :raises Exception: При ошибке взаимодействия с API.
+    """
+    try:
+        with open(audio_path, "rb") as audio_file:
+            response = await client.audio.transcriptions.create(
+                model="whisper-1",
+                file=audio_file
+            )
+        return response.text
+    except Exception as e:
+        raise Exception(f"Ошибка при распознавании речи: {str(e)}")
