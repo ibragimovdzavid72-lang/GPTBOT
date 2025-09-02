@@ -20,7 +20,7 @@ import asyncpg
 
 from .config import settings
 from .suggest import generate_prompt_from_logs
-from .ai import openai_chat, openai_image, openai_vision, openai_tts
+from .ai import openai_chat, openai_image, openai_vision, openai_tts, openai_stt
 from .admin import is_admin, cmd_admin_stats, cmd_errors, cmd_bot_on, cmd_bot_off, is_bot_active
 
 # Настройка логирования
@@ -455,6 +455,11 @@ async def handle_message(message: types.Message) -> None:
     """Обработчик всех текстовых сообщений."""
     global pool
     
+    # Обрабатываем голосовые сообщения
+    if message.voice:
+        await handle_voice_message(message)
+        return
+    
     # Обрабатываем изображения
     if message.photo:
         await handle_image_message(message)
@@ -489,10 +494,377 @@ async def handle_message(message: types.Message) -> None:
                             message.from_user.username,
                             "auto_art",
                             message.text,
-```
+                            f"Сгенерировано изображение: {image_url}",
+                        )
+                        # Сохраняем сообщение в истории диалога
+                        await conn.execute(
+                            "INSERT INTO dialog_history (user_id, role, content) VALUES ($1, $2, $3)",
+                            message.from_user.id, "user", message.text
+                        )
+                        await conn.execute(
+                            "INSERT INTO dialog_history (user_id, role, content) VALUES ($1, $2, $3)",
+                            message.from_user.id, "assistant", f"Сгенерировано изображение: {image_url}"
+                        )
+                except Exception as e:
+                    logger.error(f"Ошибка при записи в базу данных: {e}")
+                    # Продолжаем работу, даже если не удалось записать в БД
+            else:
+                logger.warning("Нет подключения к базе данных, пропускаем запись лога")
+            return
+        except Exception as e:
+            logger.error(f"Ошибка при генерации изображения: {e}")
+            await message.answer("❌ Извините, произошла ошибка при генерации изображения.")
+            return
+    
+    try:
+        # Получаем выбранную пользователем модель
+        user_model = None
+        if pool:
+            try:
+                async with pool.acquire() as conn:
+                    row = await conn.fetchrow(
+                        "SELECT preferred_model FROM user_settings WHERE user_id = $1",
+                        message.from_user.id
+                    )
+                    if row:
+                        user_model = row["preferred_model"]
+            except Exception as e:
+                logger.error(f"Ошибка при получении настроек пользователя: {e}")
+        
+        # Получаем историю диалога
+        dialog_history = []
+        if pool:
+            try:
+                async with pool.acquire() as conn:
+                    rows = await conn.fetch(
+                        "SELECT role, content FROM dialog_history WHERE user_id = $1 ORDER BY id DESC LIMIT 10",
+                        message.from_user.id
+                    )
+                    # Переворачиваем историю, чтобы она была в хронологическом порядке
+                    dialog_history = [{"role": row["role"], "content": row["content"]} for row in reversed(rows)]
+            except Exception as e:
+                logger.error(f"Ошибка при получении истории диалога: {e}")
+        
+        # Добавляем текущее сообщение в историю
+        dialog_history.append({"role": "user", "content": message.text})
+        
+        # Получаем ответ от OpenAI с учетом истории
+        response = await openai_chat_with_history(DEFAULT_SYSTEM_PROMPT, dialog_history, user_model)
+        
+        # Усечение длинных ответов для Telegram
+        if len(response) > settings.MAX_TG_REPLY:
+            response = response[: settings.MAX_TG_REPLY] + "... (ответ усечён)"
+        
+        # Отправляем ответ пользователю
+        # Проверяем, включены ли голосовые ответы
+        tts_enabled = False
+        tts_voice = "alloy"
+        if pool:
+            try:
+                async with pool.acquire() as conn:
+                    row = await conn.fetchrow(
+                        "SELECT tts_enabled, tts_voice FROM user_settings WHERE user_id = $1",
+                        message.from_user.id
+                    )
+                    if row:
+                        tts_enabled = row["tts_enabled"]
+                        tts_voice = row["tts_voice"]
+            except Exception as e:
+                logger.error(f"Ошибка при получении настроек TTS: {e}")
+        
+        if tts_enabled and len(response) < 4000:  # Ограничение на длину для TTS
+            try:
+                # Генерируем голосовое сообщение
+                audio_content = await openai_tts(response, tts_voice)
+                
+                # Создаем временный файл для аудио
+                import tempfile
+                import os
+                
+                with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp_file:
+                    temp_filename = temp_file.name
+                    temp_file.write(audio_content)
+                
+                # Отправляем голосовое сообщение
+                from aiogram.types import FSInputFile
+                audio = FSInputFile(temp_filename, filename="response.mp3")
+                await message.answer_voice(audio, caption=response[:1000] + "..." if len(response) > 1000 else response)
+                
+                # Удаляем временный файл
+                os.unlink(temp_filename)
+            except Exception as e:
+                logger.error(f"Ошибка при генерации голосового ответа: {e}")
+                # Отправляем текстовый ответ в случае ошибки
+                await message.answer(response)
+        else:
+            # Отправляем текстовый ответ
+            await message.answer(response)
+        
+        # Записываем взаимодействие в базу
+        if pool:
+            try:
+                async with pool.acquire() as conn:
+                    await conn.execute(
+                        "INSERT INTO logs (username, command, args, answer) VALUES ($1, $2, $3, $4)",
+                        message.from_user.username,
+                        "message",
+                        message.text,
+                        response,
+                    )
+                    # Сохраняем сообщение в истории диалога
+                    await conn.execute(
+                        "INSERT INTO dialog_history (user_id, role, content) VALUES ($1, $2, $3)",
+                        message.from_user.id, "user", message.text
+                    )
+                    await conn.execute(
+                        "INSERT INTO dialog_history (user_id, role, content) VALUES ($1, $2, $3)",
+                        message.from_user.id, "assistant", response
+                    )
+            except Exception as e:
+                logger.error(f"Ошибка при записи в базу данных: {e}")
+                # Продолжаем работу, даже если не удалось записать в БД
+        else:
+            logger.warning("Нет подключения к базе данных, пропускаем запись лога")
+    except Exception as e:
+        logger.error(f"Ошибка обработки сообщения: {e}")
+        await message.answer("❌ Извините, произошла ошибка при обработке вашего сообщения.")
 
-```
 
-```
+async def handle_voice_message(message: types.Message) -> None:
+    """Обработчик голосовых сообщений."""
+    global pool
+    
+    # Проверяем, активен ли бот
+    if not await is_bot_active(pool):
+        await message.answer("⛔ Бот временно отключён администратором.")
+        return
+    
+    try:
+        # Получаем файл голосового сообщения
+        file_info = await bot.get_file(message.voice.file_id)
+        file_path = file_info.file_path
+        
+        # Скачиваем голосовое сообщение
+        file_url = f"https://api.telegram.org/file/bot{settings.TELEGRAM_BOT_TOKEN}/{file_path}"
+        
+        # Создаем временное имя файла
+        import tempfile
+        import aiohttp
+        import os
+        
+        with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as temp_file:
+            temp_filename = temp_file.name
+            
+        # Скачиваем файл
+        async with aiohttp.ClientSession() as session:
+            async with session.get(file_url) as response:
+                if response.status == 200:
+                    with open(temp_filename, 'wb') as f:
+                        f.write(await response.read())
+                else:
+                    raise Exception(f"Не удалось скачать голосовое сообщение: {response.status}")
+        
+        # Распознаем речь с помощью OpenAI Whisper
+        recognized_text = await openai_stt(temp_filename)
+        
+        # Удаляем временный файл
+        os.unlink(temp_filename)
+        
+        # Отправляем пользователю распознанный текст для подтверждения
+        await message.answer(f"🎤 Распознанный текст:\n\n{recognized_text}\n\nОбрабатываю ваш запрос...")
+        
+        # Обрабатываем распознанный текст как обычное сообщение
+        # Создаем фиктивное сообщение с распознанным текстом
+        from dataclasses import dataclass
+        from typing import Optional
+        
+        @dataclass
+        class FakeMessage:
+            text: str
+            from_user: object
+            chat: object
+            message_id: int
+            
+            def __init__(self, original_message, text):
+                self.text = text
+                self.from_user = original_message.from_user
+                self.chat = original_message.chat
+                self.message_id = original_message.message_id
+        
+        fake_message = FakeMessage(message, recognized_text)
+        
+        # Обрабатываем как обычное текстовое сообщение
+        await process_text_message(fake_message)
+        
+    except Exception as e:
+        logger.error(f"Ошибка при обработке голосового сообщения: {e}")
+        await message.answer("❌ Извините, произошла ошибка при распознавании голосового сообщения.")
 
-```
+
+async def process_text_message(message) -> None:
+    """Обрабатывает текстовое сообщение (обычное или из голосового)."""
+    global pool
+    
+    # Игнорируем сообщения без текста
+    if not message.text:
+        return
+    
+    # Проверяем, активен ли бот
+    if not await is_bot_active(pool):
+        await message.answer("⛔ Бот временно отключён администратором.")
+        return
+    
+    text = message.text.lower()
+    
+    # Если пользователь явно просит "нарисуй", "сделай картинку", "создай арт"
+    image_keywords = ["картинку", "изображение", "нарисуй", "арт", "картина", "рисунок", "фото", "изобрази"]
+    if any(word in text for word in image_keywords):
+        try:
+            # Генерируем изображение через OpenAI
+            image_url = await openai_image(message.text)
+            # Отправляем изображение пользователю
+            await message.answer_photo(image_url, caption=f"✨ Вот что получилось!")
+            
+            # Записываем взаимодействие в базу
+            if pool:
+                try:
+                    async with pool.acquire() as conn:
+                        await conn.execute(
+                            "INSERT INTO logs (username, command, args, answer) VALUES ($1, $2, $3, $4)",
+                            message.from_user.username,
+                            "auto_art",
+                            message.text,
+                            f"Сгенерировано изображение: {image_url}",
+                        )
+                        # Сохраняем сообщение в истории диалога
+                        await conn.execute(
+                            "INSERT INTO dialog_history (user_id, role, content) VALUES ($1, $2, $3)",
+                            message.from_user.id, "user", message.text
+                        )
+                        await conn.execute(
+                            "INSERT INTO dialog_history (user_id, role, content) VALUES ($1, $2, $3)",
+                            message.from_user.id, "assistant", f"Сгенерировано изображение: {image_url}"
+                        )
+                except Exception as e:
+                    logger.error(f"Ошибка при записи в базу данных: {e}")
+                    # Продолжаем работу, даже если не удалось записать в БД
+            else:
+                logger.warning("Нет подключения к базе данных, пропускаем запись лога")
+            return
+        except Exception as e:
+            logger.error(f"Ошибка при генерации изображения: {e}")
+            await message.answer("❌ Извините, произошла ошибка при генерации изображения.")
+            return
+    
+    try:
+        # Получаем выбранную пользователем модель
+        user_model = None
+        if pool:
+            try:
+                async with pool.acquire() as conn:
+                    row = await conn.fetchrow(
+                        "SELECT preferred_model FROM user_settings WHERE user_id = $1",
+                        message.from_user.id
+                    )
+                    if row:
+                        user_model = row["preferred_model"]
+            except Exception as e:
+                logger.error(f"Ошибка при получении настроек пользователя: {e}")
+        
+        # Получаем историю диалога
+        dialog_history = []
+        if pool:
+            try:
+                async with pool.acquire() as conn:
+                    rows = await conn.fetch(
+                        "SELECT role, content FROM dialog_history WHERE user_id = $1 ORDER BY id DESC LIMIT 10",
+                        message.from_user.id
+                    )
+                    # Переворачиваем историю, чтобы она была в хронологическом порядке
+                    dialog_history = [{"role": row["role"], "content": row["content"]} for row in reversed(rows)]
+            except Exception as e:
+                logger.error(f"Ошибка при получении истории диалога: {e}")
+        
+        # Добавляем текущее сообщение в историю
+        dialog_history.append({"role": "user", "content": message.text})
+        
+        # Получаем ответ от OpenAI с учетом истории
+        response = await openai_chat_with_history(DEFAULT_SYSTEM_PROMPT, dialog_history, user_model)
+        
+        # Усечение длинных ответов для Telegram
+        if len(response) > settings.MAX_TG_REPLY:
+            response = response[: settings.MAX_TG_REPLY] + "... (ответ усечён)"
+        
+        # Отправляем ответ пользователю
+        # Проверяем, включены ли голосовые ответы
+        tts_enabled = False
+        tts_voice = "alloy"
+        if pool:
+            try:
+                async with pool.acquire() as conn:
+                    row = await conn.fetchrow(
+                        "SELECT tts_enabled, tts_voice FROM user_settings WHERE user_id = $1",
+                        message.from_user.id
+                    )
+                    if row:
+                        tts_enabled = row["tts_enabled"]
+                        tts_voice = row["tts_voice"]
+            except Exception as e:
+                logger.error(f"Ошибка при получении настроек TTS: {e}")
+        
+        if tts_enabled and len(response) < 4000:  # Ограничение на длину для TTS
+            try:
+                # Генерируем голосовое сообщение
+                audio_content = await openai_tts(response, tts_voice)
+                
+                # Создаем временный файл для аудио
+                import tempfile
+                import os
+                
+                with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp_file:
+                    temp_filename = temp_file.name
+                    temp_file.write(audio_content)
+                
+                # Отправляем голосовое сообщение
+                from aiogram.types import FSInputFile
+                audio = FSInputFile(temp_filename, filename="response.mp3")
+                await message.answer_voice(audio, caption=response[:1000] + "..." if len(response) > 1000 else response)
+                
+                # Удаляем временный файл
+                os.unlink(temp_filename)
+            except Exception as e:
+                logger.error(f"Ошибка при генерации голосового ответа: {e}")
+                # Отправляем текстовый ответ в случае ошибки
+                await message.answer(response)
+        else:
+            # Отправляем текстовый ответ
+            await message.answer(response)
+        
+        # Записываем взаимодействие в базу
+        if pool:
+            try:
+                async with pool.acquire() as conn:
+                    await conn.execute(
+                        "INSERT INTO logs (username, command, args, answer) VALUES ($1, $2, $3, $4)",
+                        message.from_user.username,
+                        "message",
+                        message.text,
+                        response,
+                    )
+                    # Сохраняем сообщение в истории диалога
+                    await conn.execute(
+                        "INSERT INTO dialog_history (user_id, role, content) VALUES ($1, $2, $3)",
+                        message.from_user.id, "user", message.text
+                    )
+                    await conn.execute(
+                        "INSERT INTO dialog_history (user_id, role, content) VALUES ($1, $2, $3)",
+                        message.from_user.id, "assistant", response
+                    )
+            except Exception as e:
+                logger.error(f"Ошибка при записи в базу данных: {e}")
+                # Продолжаем работу, даже если не удалось записать в БД
+        else:
+            logger.warning("Нет подключения к базе данных, пропускаем запись лога")
+    except Exception as e:
+        logger.error(f"Ошибка обработки сообщения: {e}")
+        await message.answer("❌ Извините, произошла ошибка при обработке вашего сообщения.")
