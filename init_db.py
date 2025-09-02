@@ -28,24 +28,47 @@ async def main():
         conn = await asyncpg.connect(DATABASE_URL)
         print("✅ Подключение установлено")
         
+        # Проверяем существование таблиц
+        print("🔍 Проверка существующих таблиц...")
+        tables_exist = await conn.fetchval("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_name = 'logs' OR table_name = 'bot_config'
+            )
+        """)
+        
+        if tables_exist:
+            print("✅ Таблицы уже существуют в базе данных")
+            await conn.close()
+            return
+        
         # Читаем SQL-скрипт
         print("📖 Чтение schema.sql...")
-        with open("schema.sql", "r", encoding="utf-8") as f:
-            sql_script = f.read()
+        try:
+            with open("schema.sql", "r", encoding="utf-8") as f:
+                sql_script = f.read()
+        except FileNotFoundError:
+            print("❌ Файл schema.sql не найден")
+            await conn.close()
+            return
+        except Exception as e:
+            print(f"❌ Ошибка при чтении schema.sql: {e}")
+            await conn.close()
+            return
         
         # Выполняем SQL-скрипт
         print("⚙️ Выполнение SQL-скрипта...")
         # Разделяем скрипт на отдельные команды по точке с запятой
         commands = sql_script.split(";")
         
-        for command in commands:
+        for i, command in enumerate(commands):
             command = command.strip()
             if command:
                 try:
                     await conn.execute(command)
-                    print(f"✅ Выполнена команда: {command[:50]}...")
+                    print(f"✅ Выполнена команда {i+1}: {command[:50]}...")
                 except Exception as e:
-                    print(f"⚠️ Ошибка при выполнении команды: {command[:50]}... Ошибка: {e}")
+                    print(f"⚠️ Ошибка при выполнении команды {i+1}: {command[:50]}... Ошибка: {e}")
         
         # Закрываем соединение
         await conn.close()
