@@ -11,6 +11,9 @@ A Telegram bot powered by OpenAI's GPT models with advanced features including p
 - Interactive menu with quick access buttons
 - Statistics viewing with `/stats` command
 - Help information with `/help` command
+- Admin panel with bot management commands
+- Personalized greetings for users
+- AI model selection via `/mode` command
 - Configurable through environment variables
 - Ready for deployment on platforms like Heroku or Railway
 
@@ -64,6 +67,7 @@ DATABASE_URL=postgresql://postgres:password@localhost:5432/telegram_bot
 OPENAI_MODEL=gpt-4o
 TEMPERATURE=0.8
 REQUEST_TIMEOUT=30
+ADMINS=123456789,987654321
 MAX_TG_REPLY=3500
 ```
 
@@ -78,12 +82,22 @@ After starting the bot, you can use the following commands:
 - `/stats` - Show usage statistics
 - `/suggest_prompt` - Get a prompt suggestion based on interaction history
 - `/art` - Create an image based on a description
+- `/mode MODEL` - Change AI model (e.g., `/mode gpt-4o`)
+
+### Admin Commands
+
+Additional commands are available for administrators:
+
+- `/admin_stats` - Show user and message statistics
+- `/errors` - Show recent errors
+- `/bot_on` - Enable the bot
+- `/bot_off` - Disable the bot
 
 The main menu includes buttons:
-- 🧠 Smart Chat - AI conversation mode
-- 🎨 Create Art - Image generation feature
 - 📊 Statistics - View usage statistics
-- ❓ Help - Help information
+- 🎨 Create Art - Image generation feature
+- ⚙️ Settings - Bot settings (in development)
+- 🧠 Smart Chat - AI conversation mode
 
 ## Documentation (Russian)
 
@@ -129,7 +143,7 @@ To create the required tables in the database, use the `init_db.py` script:
 python init_db.py
 ```
 
-This script connects to the database specified in the DATABASE_URL environment variable and executes the SQL script from the `schema.sql` file, creating the `logs` and `bot_config` tables.
+This script connects to the database specified in the DATABASE_URL environment variable and executes the SQL script from the `schema.sql` file, creating the `logs`, `bot_config`, and `bot_status` tables.
 
 **Important:** If the tables already exist, the script will not attempt to recreate them.
 
@@ -142,6 +156,7 @@ telegram_ai_agent_v2/
 │   ├── ai.py           # OpenAI integration
 │   ├── config.py       # Configuration management
 │   ├── main.py         # Main bot logic
+│   ├── admin.py        # Admin panel
 │   └── suggest.py      # Prompt suggestion functionality
 ├── .env.example         # Example environment variables
 ├── .gitignore
