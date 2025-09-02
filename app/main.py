@@ -20,7 +20,7 @@ import asyncpg
 
 from .config import settings
 from .suggest import generate_prompt_from_logs
-from .ai import openai_chat, openai_image
+from .ai import openai_chat, openai_image, openai_vision, openai_tts
 from .admin import is_admin, cmd_admin_stats, cmd_errors, cmd_bot_on, cmd_bot_off, is_bot_active
 
 # Настройка логирования
@@ -79,7 +79,6 @@ WELCOME_TEXT = """
 # Создание главного меню с кнопками (без админ-панели по умолчанию)
 main_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="📊 Статистика", callback_data="stats")],
-    [InlineKeyboardButton(text="🎨 Создать арт", callback_data="art")],
     [InlineKeyboardButton(text="⚙️ Настройки", callback_data="settings")],
     [InlineKeyboardButton(text="🧠 Умный чат", callback_data="chat")],
 ])
@@ -87,10 +86,25 @@ main_menu = InlineKeyboardMarkup(inline_keyboard=[
 # Создание расширенного меню с админ-панелью для администраторов
 admin_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="📊 Статистика", callback_data="stats")],
-    [InlineKeyboardButton(text="🎨 Создать арт", callback_data="art")],
     [InlineKeyboardButton(text="⚙️ Настройки", callback_data="settings")],
     [InlineKeyboardButton(text="🧠 Умный чат", callback_data="chat")],
     [InlineKeyboardButton(text="👑 Админ-панель", callback_data="admin_panel")],
+])
+
+# Создание меню настроек
+settings_menu = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="🤖 Выбор модели ИИ", callback_data="select_model")],
+    [InlineKeyboardButton(text="🔄 Сброс контекста", callback_data="reset_context")],
+    [InlineKeyboardButton(text="🔊 Голосовые ответы", callback_data="tts_settings")],
+    [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_main")],
+])
+
+# Создание меню выбора модели ИИ
+model_selection_menu = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="GPT-4o", callback_data="set_model_gpt-4o")],
+    [InlineKeyboardButton(text="GPT-4 Turbo", callback_data="set_model_gpt-4-turbo")],
+    [InlineKeyboardButton(text="GPT-3.5 Turbo", callback_data="set_model_gpt-3.5-turbo")],
+    [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_settings")],
 ])
 
 
@@ -294,13 +308,11 @@ async def process_callback(callback_query: types.CallbackQuery) -> None:
     
     if callback_query.data == "chat":
         await callback_query.message.answer("💬 Выберите режим чата или просто отправьте мне сообщение!")
-    elif callback_query.data == "art":
-        await callback_query.message.answer("🎨 Отправьте мне описание изображения с командой /art\nНапример: /art кот в очках на скейте")
     elif callback_query.data == "stats":
         # Вызываем обработчик команды /stats
         await cmd_stats(callback_query.message)
     elif callback_query.data == "settings":
-        await callback_query.message.answer("⚙️ Настройки бота (в разработке)")
+        await callback_query.message.answer("⚙️ <b>Настройки бота</b>", reply_markup=settings_menu)
     elif callback_query.data == "help":
         # Вызываем обработчик команды /help
         await cmd_help(callback_query.message)
@@ -319,6 +331,50 @@ async def process_callback(callback_query: types.CallbackQuery) -> None:
             await callback_query.message.answer(admin_panel_text)
         else:
             await callback_query.message.answer("⛔ У вас нет доступа к админ-панели.")
+    elif callback_query.data == "select_model":
+        await callback_query.message.answer("🤖 <b>Выберите модель ИИ</b>", reply_markup=model_selection_menu)
+    elif callback_query.data == "reset_context":
+        # Вызываем команду сброса контекста
+        from aiogram.filters import CommandObject
+        await cmd_reset_context(callback_query.message)
+        await callback_query.message.answer("✅ Контекст диалога успешно сброшен!", reply_markup=settings_menu)
+    elif callback_query.data == "tts_settings":
+        # Показываем текущие настройки TTS и предлагаем изменить
+        await show_tts_settings(callback_query.message)
+    elif callback_query.data == "toggle_tts":
+        # Переключаем настройки TTS
+        await toggle_tts(callback_query.message)
+        await show_tts_settings(callback_query.message)
+    elif callback_query.data == "change_tts_voice":
+        # Показываем меню выбора голоса
+        voice_menu = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Alloy", callback_data="set_voice_alloy")],
+            [InlineKeyboardButton(text="Echo", callback_data="set_voice_echo")],
+            [InlineKeyboardButton(text="Fable", callback_data="set_voice_fable")],
+            [InlineKeyboardButton(text="Onyx", callback_data="set_voice_onyx")],
+            [InlineKeyboardButton(text="Nova", callback_data="set_voice_nova")],
+            [InlineKeyboardButton(text="Shimmer", callback_data="set_voice_shimmer")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="tts_settings")],
+        ])
+        await callback_query.message.answer("🗣 <b>Выберите голос</b>", reply_markup=voice_menu)
+    elif callback_query.data.startswith("set_voice_"):
+        # Устанавливаем голос TTS
+        voice = callback_query.data.replace("set_voice_", "")
+        await set_tts_voice(callback_query.message, voice)
+        await show_tts_settings(callback_query.message)
+    elif callback_query.data == "back_to_main":
+        # Возвращаемся в главное меню
+        if is_admin(callback_query.from_user.id):
+            await callback_query.message.answer("🏠 <b>Главное меню</b>", reply_markup=admin_menu)
+        else:
+            await callback_query.message.answer("🏠 <b>Главное меню</b>", reply_markup=main_menu)
+    elif callback_query.data == "back_to_settings":
+        await callback_query.message.answer("⚙️ <b>Настройки бота</b>", reply_markup=settings_menu)
+    elif callback_query.data.startswith("set_model_"):
+        # Устанавливаем модель ИИ
+        model = callback_query.data.replace("set_model_", "")
+        await set_user_model(callback_query.message, model)
+        await callback_query.message.answer(f"✅ Модель ИИ успешно изменена на {model}!", reply_markup=settings_menu)
 
 
 @dp.message(Command("admin_stats"))
@@ -348,71 +404,8 @@ async def cmd_bot_off_handler(message: types.Message) -> None:
 @dp.message(Command("mode"))
 async def cmd_mode(message: types.Message, command: CommandObject) -> None:
     """Обработчик команды /mode для изменения модели AI."""
-    global pool
-    
-    if not command.args:
-        # Показываем текущую модель пользователя
-        current_model = settings.OPENAI_MODEL
-        if pool:
-            try:
-                async with pool.acquire() as conn:
-                    row = await conn.fetchrow(
-                        "SELECT preferred_model FROM user_settings WHERE user_id = $1",
-                        message.from_user.id
-                    )
-                    if row:
-                        current_model = row["preferred_model"]
-            except Exception as e:
-                logger.error(f"Ошибка при получении настроек пользователя: {e}")
-        
-        await message.answer(
-            f"Ваша текущая модель: {current_model}\n"
-            "Доступные модели: gpt-3.5-turbo, gpt-4, gpt-4o, gpt-4-turbo\n"
-            "Укажите модель, например: /mode gpt-4o"
-        )
-        return
-    
-    model = command.args.strip()
-    allowed_models = ["gpt-3.5-turbo", "gpt-4", "gpt-4o", "gpt-4-turbo"]
-    
-    # Добавляем поддержку будущих моделей
-    if model.startswith("gpt-5"):
-        # Это заглушка для будущей модели GPT-5
-        allowed_models.append(model)
-    
-    if model not in allowed_models:
-        await message.answer(f"Недопустимая модель. Доступные модели: {', '.join(allowed_models)}")
-        return
-    
-    # Сохраняем выбор модели пользователя в базе данных
-    if pool:
-        try:
-            async with pool.acquire() as conn:
-                # Проверяем, существует ли запись для этого пользователя
-                existing = await conn.fetchval(
-                    "SELECT 1 FROM user_settings WHERE user_id = $1",
-                    message.from_user.id
-                )
-                
-                if existing:
-                    # Обновляем существующую запись
-                    await conn.execute(
-                        "UPDATE user_settings SET preferred_model = $1, updated_at = now() WHERE user_id = $2",
-                        model, message.from_user.id
-                    )
-                else:
-                    # Создаем новую запись
-                    await conn.execute(
-                        "INSERT INTO user_settings (user_id, preferred_model) VALUES ($1, $2)",
-                        message.from_user.id, model
-                    )
-            
-            await message.answer(f"✅ Модель успешно изменена на: {model}")
-        except Exception as e:
-            logger.error(f"Ошибка при сохранении настроек пользователя: {e}")
-            await message.answer("❌ Произошла ошибка при сохранении настроек. Попробуйте позже.")
-    else:
-        await message.answer("❌ База данных недоступна. Настройки не могут быть сохранены.")
+    # Показываем меню выбора модели
+    await message.answer("🤖 <b>Выберите модель ИИ</b>", reply_markup=model_selection_menu)
 
 
 @dp.message(Command("reset_context"))
@@ -462,6 +455,11 @@ async def handle_message(message: types.Message) -> None:
     """Обработчик всех текстовых сообщений."""
     global pool
     
+    # Обрабатываем изображения
+    if message.photo:
+        await handle_image_message(message)
+        return
+    
     # Игнорируем сообщения без текста
     if not message.text:
         return
@@ -491,108 +489,10 @@ async def handle_message(message: types.Message) -> None:
                             message.from_user.username,
                             "auto_art",
                             message.text,
-                            f"Сгенерировано изображение: {image_url}",
-                        )
-                        # Сохраняем сообщение в истории диалога
-                        await conn.execute(
-                            "INSERT INTO dialog_history (user_id, role, content) VALUES ($1, $2, $3)",
-                            message.from_user.id, "user", message.text
-                        )
-                        await conn.execute(
-                            "INSERT INTO dialog_history (user_id, role, content) VALUES ($1, $2, $3)",
-                            message.from_user.id, "assistant", f"Сгенерировано изображение: {image_url}"
-                        )
-                except Exception as e:
-                    logger.error(f"Ошибка при записи в базу данных: {e}")
-                    # Продолжаем работу, даже если не удалось записать в БД
-            else:
-                logger.warning("Нет подключения к базе данных, пропускаем запись лога")
-            return
-        except Exception as e:
-            logger.error(f"Ошибка при генерации изображения: {e}")
-            await message.answer("❌ Извините, произошла ошибка при генерации изображения.")
-            return
-    
-    try:
-        # Получаем выбранную пользователем модель
-        user_model = None
-        if pool:
-            try:
-                async with pool.acquire() as conn:
-                    row = await conn.fetchrow(
-                        "SELECT preferred_model FROM user_settings WHERE user_id = $1",
-                        message.from_user.id
-                    )
-                    if row:
-                        user_model = row["preferred_model"]
-            except Exception as e:
-                logger.error(f"Ошибка при получении настроек пользователя: {e}")
-        
-        # Получаем историю диалога
-        dialog_history = []
-        if pool:
-            try:
-                async with pool.acquire() as conn:
-                    rows = await conn.fetch(
-                        "SELECT role, content FROM dialog_history WHERE user_id = $1 ORDER BY id DESC LIMIT 10",
-                        message.from_user.id
-                    )
-                    # Переворачиваем историю, чтобы она была в хронологическом порядке
-                    dialog_history = [{"role": row["role"], "content": row["content"]} for row in reversed(rows)]
-            except Exception as e:
-                logger.error(f"Ошибка при получении истории диалога: {e}")
-        
-        # Добавляем текущее сообщение в историю
-        dialog_history.append({"role": "user", "content": message.text})
-        
-        # Получаем ответ от OpenAI с учетом истории
-        response = await openai_chat_with_history(DEFAULT_SYSTEM_PROMPT, dialog_history, user_model)
-        
-        # Усечение длинных ответов для Telegram
-        if len(response) > settings.MAX_TG_REPLY:
-            response = response[: settings.MAX_TG_REPLY] + "... (ответ усечён)"
-        
-        # Отправляем ответ пользователю
-        await message.answer(response)
-        
-        # Записываем взаимодействие в базу
-        if pool:
-            try:
-                async with pool.acquire() as conn:
-                    await conn.execute(
-                        "INSERT INTO logs (username, command, args, answer) VALUES ($1, $2, $3, $4)",
-                        message.from_user.username,
-                        "message",
-                        message.text,
-                        response,
-                    )
-                    # Сохраняем сообщение в истории диалога
-                    await conn.execute(
-                        "INSERT INTO dialog_history (user_id, role, content) VALUES ($1, $2, $3)",
-                        message.from_user.id, "user", message.text
-                    )
-                    await conn.execute(
-                        "INSERT INTO dialog_history (user_id, role, content) VALUES ($1, $2, $3)",
-                        message.from_user.id, "assistant", response
-                    )
-            except Exception as e:
-                logger.error(f"Ошибка при записи в базу данных: {e}")
-                # Продолжаем работу, даже если не удалось записать в БД
-        else:
-            logger.warning("Нет подключения к базе данных, пропускаем запись лога")
-    except Exception as e:
-        logger.error(f"Ошибка обработки сообщения: {e}")
-        await message.answer("❌ Извините, произошла ошибка при обработке вашего сообщения.")
+```
 
+```
 
-async def main() -> None:
-    """Основная функция запуска бота."""
-    # Регистрируем обработчики запуска и остановки
-    dp.startup.register(on_startup)
-    dp.shutdown.register(on_shutdown)
-    # Запускаем polling (опрос)
-    await dp.start_polling(bot)
+```
 
-
-if __name__ == "__main__":
-    asyncio.run(main())
+```
