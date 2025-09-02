@@ -25,6 +25,8 @@ class Settings:
     MAX_TG_REPLY: int = int(os.getenv("MAX_TG_REPLY", "3500"))
     # Строка подключения к базе данных PostgreSQL
     DATABASE_URL: str = os.getenv("DATABASE_URL", "")
+    # Список администраторов бота (через запятую)
+    ADMINS: list = [int(x) for x in os.getenv("ADMINS", "").split(",") if x.strip().isdigit()] or []
 
 
 settings = Settings()
