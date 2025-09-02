@@ -88,10 +88,13 @@ After starting the bot, you can use the following commands:
 
 Additional commands are available for administrators:
 
+- `/admin` - Access the admin panel with all admin commands
 - `/admin_stats` - Show user and message statistics
 - `/errors` - Show recent errors
 - `/bot_on` - Enable the bot
 - `/bot_off` - Disable the bot
+
+Administrators also have access to a special "👑 Admin Panel" button in the main menu.
 
 The main menu includes buttons:
 - 📊 Statistics - View usage statistics
