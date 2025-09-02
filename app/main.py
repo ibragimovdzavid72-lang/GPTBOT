@@ -60,14 +60,20 @@ WELCOME_TEXT = """
 • 📊 Продвинутая аналитика
 • 💎 Персонализация
 
-💫 Начните прямо сейчас:
-Просто напишите любой вопрос и испытайте мощь современного AI!
+💫 Новые возможности:
+• Выбор модели ИИ (/mode)
+• Контекст диалога с историей
+• Автоматическое распознавание запросов на изображения
 
 🎯 Команды:
 /help - Подробная помощь
 /stats - Ваша статистика
 /suggest_prompt - Улучшенный промпт
 /art - Создать изображение
+/mode - Выбрать модель ИИ
+/reset_context - Сбросить контекст
+
+Просто напишите любой вопрос и испытайте мощь современного AI!
 """
 
 # Создание главного меню с кнопками (без админ-панели по умолчанию)
@@ -167,7 +173,9 @@ async def cmd_help(message: types.Message) -> None:
         "/help - Показать справку\n"
         "/stats - Показать статистику\n"
         "/suggest_prompt - Предложить улучшенный промпт\n"
-        "/art - Создать изображение по описанию\n\n"
+        "/art - Создать изображение по описанию\n"
+        "/mode - Выбрать модель ИИ (например: /mode gpt-4o)\n"
+        "/reset_context - Сбросить контекст диалога\n\n"
         "Используйте кнопки меню для быстрого доступа к функциям."
     )
     
@@ -340,20 +348,94 @@ async def cmd_bot_off_handler(message: types.Message) -> None:
 @dp.message(Command("mode"))
 async def cmd_mode(message: types.Message, command: CommandObject) -> None:
     """Обработчик команды /mode для изменения модели AI."""
+    global pool
+    
     if not command.args:
-        await message.answer("Укажите модель, например: /mode gpt-4o")
+        # Показываем текущую модель пользователя
+        current_model = settings.OPENAI_MODEL
+        if pool:
+            try:
+                async with pool.acquire() as conn:
+                    row = await conn.fetchrow(
+                        "SELECT preferred_model FROM user_settings WHERE user_id = $1",
+                        message.from_user.id
+                    )
+                    if row:
+                        current_model = row["preferred_model"]
+            except Exception as e:
+                logger.error(f"Ошибка при получении настроек пользователя: {e}")
+        
+        await message.answer(
+            f"Ваша текущая модель: {current_model}\n"
+            "Доступные модели: gpt-3.5-turbo, gpt-4, gpt-4o, gpt-4-turbo\n"
+            "Укажите модель, например: /mode gpt-4o"
+        )
         return
     
     model = command.args.strip()
     allowed_models = ["gpt-3.5-turbo", "gpt-4", "gpt-4o", "gpt-4-turbo"]
     
+    # Добавляем поддержку будущих моделей
+    if model.startswith("gpt-5"):
+        # Это заглушка для будущей модели GPT-5
+        allowed_models.append(model)
+    
     if model not in allowed_models:
         await message.answer(f"Недопустимая модель. Доступные модели: {', '.join(allowed_models)}")
         return
     
-    # Здесь можно реализовать сохранение выбора модели пользователем
-    # Пока просто сообщаем о возможности изменения
-    await message.answer(f"Модель изменена на: {model}\n(Функция в разработке)")
+    # Сохраняем выбор модели пользователя в базе данных
+    if pool:
+        try:
+            async with pool.acquire() as conn:
+                # Проверяем, существует ли запись для этого пользователя
+                existing = await conn.fetchval(
+                    "SELECT 1 FROM user_settings WHERE user_id = $1",
+                    message.from_user.id
+                )
+                
+                if existing:
+                    # Обновляем существующую запись
+                    await conn.execute(
+                        "UPDATE user_settings SET preferred_model = $1, updated_at = now() WHERE user_id = $2",
+                        model, message.from_user.id
+                    )
+                else:
+                    # Создаем новую запись
+                    await conn.execute(
+                        "INSERT INTO user_settings (user_id, preferred_model) VALUES ($1, $2)",
+                        message.from_user.id, model
+                    )
+            
+            await message.answer(f"✅ Модель успешно изменена на: {model}")
+        except Exception as e:
+            logger.error(f"Ошибка при сохранении настроек пользователя: {e}")
+            await message.answer("❌ Произошла ошибка при сохранении настроек. Попробуйте позже.")
+    else:
+        await message.answer("❌ База данных недоступна. Настройки не могут быть сохранены.")
+
+
+@dp.message(Command("reset_context"))
+async def cmd_reset_context(message: types.Message) -> None:
+    """Обработчик команды /reset_context для сброса контекста диалога."""
+    global pool
+    
+    if not pool:
+        await message.answer("❌ База данных недоступна. Контекст не может быть сброшен.")
+        return
+    
+    try:
+        async with pool.acquire() as conn:
+            # Удаляем историю диалога для этого пользователя
+            await conn.execute(
+                "DELETE FROM dialog_history WHERE user_id = $1",
+                message.from_user.id
+            )
+        
+        await message.answer("✅ Контекст диалога успешно сброшен. Начнём с чистого листа!")
+    except Exception as e:
+        logger.error(f"Ошибка при сбросе контекста: {e}")
+        await message.answer("❌ Произошла ошибка при сбросе контекста. Попробуйте позже.")
 
 
 @dp.message(Command("admin"))
@@ -378,6 +460,8 @@ async def cmd_admin(message: types.Message) -> None:
 @dp.message()
 async def handle_message(message: types.Message) -> None:
     """Обработчик всех текстовых сообщений."""
+    global pool
+    
     # Игнорируем сообщения без текста
     if not message.text:
         return
@@ -409,8 +493,17 @@ async def handle_message(message: types.Message) -> None:
                             message.text,
                             f"Сгенерировано изображение: {image_url}",
                         )
+                        # Сохраняем сообщение в истории диалога
+                        await conn.execute(
+                            "INSERT INTO dialog_history (user_id, role, content) VALUES ($1, $2, $3)",
+                            message.from_user.id, "user", message.text
+                        )
+                        await conn.execute(
+                            "INSERT INTO dialog_history (user_id, role, content) VALUES ($1, $2, $3)",
+                            message.from_user.id, "assistant", f"Сгенерировано изображение: {image_url}"
+                        )
                 except Exception as e:
-                    logger.error(f"Ошибка при записи записи в базу данных: {e}")
+                    logger.error(f"Ошибка при записи в базу данных: {e}")
                     # Продолжаем работу, даже если не удалось записать в БД
             else:
                 logger.warning("Нет подключения к базе данных, пропускаем запись лога")
@@ -421,13 +514,47 @@ async def handle_message(message: types.Message) -> None:
             return
     
     try:
-        # Получаем ответ от OpenAI
-        response = await openai_chat(DEFAULT_SYSTEM_PROMPT, message.text)
+        # Получаем выбранную пользователем модель
+        user_model = None
+        if pool:
+            try:
+                async with pool.acquire() as conn:
+                    row = await conn.fetchrow(
+                        "SELECT preferred_model FROM user_settings WHERE user_id = $1",
+                        message.from_user.id
+                    )
+                    if row:
+                        user_model = row["preferred_model"]
+            except Exception as e:
+                logger.error(f"Ошибка при получении настроек пользователя: {e}")
+        
+        # Получаем историю диалога
+        dialog_history = []
+        if pool:
+            try:
+                async with pool.acquire() as conn:
+                    rows = await conn.fetch(
+                        "SELECT role, content FROM dialog_history WHERE user_id = $1 ORDER BY id DESC LIMIT 10",
+                        message.from_user.id
+                    )
+                    # Переворачиваем историю, чтобы она была в хронологическом порядке
+                    dialog_history = [{"role": row["role"], "content": row["content"]} for row in reversed(rows)]
+            except Exception as e:
+                logger.error(f"Ошибка при получении истории диалога: {e}")
+        
+        # Добавляем текущее сообщение в историю
+        dialog_history.append({"role": "user", "content": message.text})
+        
+        # Получаем ответ от OpenAI с учетом истории
+        response = await openai_chat_with_history(DEFAULT_SYSTEM_PROMPT, dialog_history, user_model)
+        
         # Усечение длинных ответов для Telegram
         if len(response) > settings.MAX_TG_REPLY:
             response = response[: settings.MAX_TG_REPLY] + "... (ответ усечён)"
+        
         # Отправляем ответ пользователю
         await message.answer(response)
+        
         # Записываем взаимодействие в базу
         if pool:
             try:
@@ -438,6 +565,15 @@ async def handle_message(message: types.Message) -> None:
                         "message",
                         message.text,
                         response,
+                    )
+                    # Сохраняем сообщение в истории диалога
+                    await conn.execute(
+                        "INSERT INTO dialog_history (user_id, role, content) VALUES ($1, $2, $3)",
+                        message.from_user.id, "user", message.text
+                    )
+                    await conn.execute(
+                        "INSERT INTO dialog_history (user_id, role, content) VALUES ($1, $2, $3)",
+                        message.from_user.id, "assistant", response
                     )
             except Exception as e:
                 logger.error(f"Ошибка при записи в базу данных: {e}")
