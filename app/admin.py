@@ -34,6 +34,18 @@ async def is_bot_active(pool: asyncpg.pool.Pool) -> bool:
         
     try:
         async with pool.acquire() as conn:
+            # Проверяем существование таблицы bot_status
+            table_exists = await conn.fetchval("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_name = 'bot_status'
+                )
+            """)
+            
+            if not table_exists:
+                # Если таблицы нет, бот активен по умолчанию
+                return True
+                
             row = await conn.fetchrow("SELECT is_active FROM bot_status ORDER BY id DESC LIMIT 1")
             if row is None:
                 # Если записей нет, бот активен по умолчанию
@@ -127,6 +139,23 @@ async def cmd_bot_on(message: types.Message, pool: asyncpg.pool.Pool):
 
     try:
         async with pool.acquire() as conn:
+            # Проверяем существование таблицы bot_status
+            table_exists = await conn.fetchval("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_name = 'bot_status'
+                )
+            """)
+            
+            if not table_exists:
+                # Создаем таблицу, если её нет
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS bot_status (
+                        id SERIAL PRIMARY KEY,
+                        is_active BOOLEAN DEFAULT TRUE
+                    )
+                """)
+            
             await conn.execute("INSERT INTO bot_status (is_active) VALUES (TRUE)")
         await message.answer("✅ Бот включён!")
     except Exception as e:
@@ -150,6 +179,23 @@ async def cmd_bot_off(message: types.Message, pool: asyncpg.pool.Pool):
 
     try:
         async with pool.acquire() as conn:
+            # Проверяем существование таблицы bot_status
+            table_exists = await conn.fetchval("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_name = 'bot_status'
+                )
+            """)
+            
+            if not table_exists:
+                # Создаем таблицу, если её нет
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS bot_status (
+                        id SERIAL PRIMARY KEY,
+                        is_active BOOLEAN DEFAULT TRUE
+                    )
+                """)
+            
             await conn.execute("INSERT INTO bot_status (is_active) VALUES (FALSE)")
         await message.answer("🛑 Бот выключен!")
     except Exception as e:
