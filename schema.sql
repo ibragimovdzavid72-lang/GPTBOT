@@ -21,3 +21,21 @@ CREATE TABLE IF NOT EXISTS bot_status (
     id SERIAL PRIMARY KEY,
     is_active BOOLEAN DEFAULT TRUE
 );
+
+-- Таблица пользовательских настроек
+CREATE TABLE IF NOT EXISTS user_settings (
+    id SERIAL PRIMARY KEY,                    -- Уникальный идентификатор записи
+    user_id BIGINT UNIQUE NOT NULL,           -- ID пользователя Telegram
+    preferred_model TEXT NOT NULL DEFAULT 'gpt-4o', -- Предпочтительная модель OpenAI
+    created_at TIMESTAMP DEFAULT now(),       -- Время создания записи
+    updated_at TIMESTAMP DEFAULT now()        -- Время последнего обновления
+);
+
+-- Таблица истории диалогов
+CREATE TABLE IF NOT EXISTS dialog_history (
+    id SERIAL PRIMARY KEY,                    -- Уникальный идентификатор записи
+    user_id BIGINT NOT NULL,                  -- ID пользователя Telegram
+    role TEXT NOT NULL,                       -- Роль (user или assistant)
+    content TEXT NOT NULL,                    -- Содержание сообщения
+    created_at TIMESTAMP DEFAULT now()        -- Время создания записи
+);
