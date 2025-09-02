@@ -20,7 +20,7 @@ import asyncpg
 
 from .config import settings
 from .suggest import generate_prompt_from_logs
-from .ai import openai_chat, openai_image, openai_vision, openai_tts, openai_stt
+from .ai import openai_chat, openai_image, openai_vision, openai_tts, openai_stt, openai_chat_with_history
 from .admin import is_admin, cmd_admin_stats, cmd_errors, cmd_bot_on, cmd_bot_off, is_bot_active
 
 # Настройка логирования
@@ -540,6 +540,219 @@ async def handle_voice_message(message: types.Message) -> None:
         await message.answer("❌ Извините, произошла ошибка при распознавании голосового сообщения.")
 
 
+async def set_user_model(message: types.Message, model: str) -> None:
+    """Устанавливает предпочитаемую модель ИИ для пользователя."""
+    global pool
+    
+    if not pool:
+        await message.answer("❌ База данных недоступна. Настройки не могут быть сохранены.")
+        return
+    
+    try:
+        async with pool.acquire() as conn:
+            # Проверяем, есть ли уже настройки пользователя
+            existing = await conn.fetchrow(
+                "SELECT user_id FROM user_settings WHERE user_id = $1",
+                message.from_user.id
+            )
+            
+            if existing:
+                # Обновляем существующие настройки
+                await conn.execute(
+                    "UPDATE user_settings SET preferred_model = $1 WHERE user_id = $2",
+                    model, message.from_user.id
+                )
+            else:
+                # Создаем новые настройки
+                await conn.execute(
+                    "INSERT INTO user_settings (user_id, preferred_model) VALUES ($1, $2)",
+                    message.from_user.id, model
+                )
+        
+        logger.info(f"Пользователь {message.from_user.id} изменил модель на {model}")
+    except Exception as e:
+        logger.error(f"Ошибка при сохранении модели пользователя: {e}")
+        await message.answer("❌ Произошла ошибка при сохранении настроек. Попробуйте позже.")
+
+
+async def show_tts_settings(message: types.Message) -> None:
+    """Показывает текущие настройки TTS."""
+    global pool
+    
+    tts_enabled = False
+    tts_voice = "alloy"
+    
+    if pool:
+        try:
+            async with pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT tts_enabled, tts_voice FROM user_settings WHERE user_id = $1",
+                    message.from_user.id
+                )
+                if row:
+                    tts_enabled = row["tts_enabled"]
+                    tts_voice = row["tts_voice"]
+        except Exception as e:
+            logger.error(f"Ошибка при получении настроек TTS: {e}")
+    
+    status = "Включены" if tts_enabled else "Выключены"
+    tts_menu = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"🔊 Голосовые ответы: {status}", callback_data="toggle_tts")],
+        [InlineKeyboardButton(text=f"🗣 Голос: {tts_voice.title()}", callback_data="change_tts_voice")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_settings")],
+    ])
+    
+    await message.answer("🔊 <b>Настройки голосовых ответов</b>", reply_markup=tts_menu)
+
+
+async def toggle_tts(message: types.Message) -> None:
+    """Переключает настройки TTS."""
+    global pool
+    
+    if not pool:
+        await message.answer("❌ База данных недоступна. Настройки не могут быть сохранены.")
+        return
+    
+    try:
+        async with pool.acquire() as conn:
+            # Получаем текущие настройки
+            row = await conn.fetchrow(
+                "SELECT tts_enabled FROM user_settings WHERE user_id = $1",
+                message.from_user.id
+            )
+            
+            current_tts = False
+            if row:
+                current_tts = row["tts_enabled"]
+            
+            new_tts = not current_tts
+            
+            # Проверяем, есть ли уже настройки пользователя
+            existing = await conn.fetchrow(
+                "SELECT user_id FROM user_settings WHERE user_id = $1",
+                message.from_user.id
+            )
+            
+            if existing:
+                # Обновляем существующие настройки
+                await conn.execute(
+                    "UPDATE user_settings SET tts_enabled = $1 WHERE user_id = $2",
+                    new_tts, message.from_user.id
+                )
+            else:
+                # Создаем новые настройки
+                await conn.execute(
+                    "INSERT INTO user_settings (user_id, tts_enabled) VALUES ($1, $2)",
+                    message.from_user.id, new_tts
+                )
+        
+        status = "включены" if new_tts else "выключены"
+        logger.info(f"Пользователь {message.from_user.id} изменил TTS на {status}")
+    except Exception as e:
+        logger.error(f"Ошибка при переключении TTS: {e}")
+        await message.answer("❌ Произошла ошибка при изменении настроек. Попробуйте позже.")
+
+
+async def set_tts_voice(message: types.Message, voice: str) -> None:
+    """Устанавливает голос для TTS."""
+    global pool
+    
+    if not pool:
+        await message.answer("❌ База данных недоступна. Настройки не могут быть сохранены.")
+        return
+    
+    try:
+        async with pool.acquire() as conn:
+            # Проверяем, есть ли уже настройки пользователя
+            existing = await conn.fetchrow(
+                "SELECT user_id FROM user_settings WHERE user_id = $1",
+                message.from_user.id
+            )
+            
+            if existing:
+                # Обновляем существующие настройки
+                await conn.execute(
+                    "UPDATE user_settings SET tts_voice = $1 WHERE user_id = $2",
+                    voice, message.from_user.id
+                )
+            else:
+                # Создаем новые настройки
+                await conn.execute(
+                    "INSERT INTO user_settings (user_id, tts_voice) VALUES ($1, $2)",
+                    message.from_user.id, voice
+                )
+        
+        logger.info(f"Пользователь {message.from_user.id} изменил голос TTS на {voice}")
+    except Exception as e:
+        logger.error(f"Ошибка при сохранении голоса TTS: {e}")
+        await message.answer("❌ Произошла ошибка при сохранении настроек. Попробуйте позже.")
+
+
+async def handle_image_message(message: types.Message) -> None:
+    """Обработчик сообщений с изображениями."""
+    global pool
+    
+    # Проверяем, активен ли бот
+    if not await is_bot_active(pool):
+        await message.answer("⛔ Бот временно отключён администратором.")
+        return
+    
+    try:
+        # Получаем самое большое изображение из присланных
+        photo = message.photo[-1]
+        
+        # Получаем файл изображения
+        file_info = await bot.get_file(photo.file_id)
+        file_path = file_info.file_path
+        
+        # Создаем URL для скачивания
+        file_url = f"https://api.telegram.org/file/bot{settings.TELEGRAM_BOT_TOKEN}/{file_path}"
+        
+        # Получаем текст сообщения (если есть)
+        caption = message.caption or "Что изображено на этой картинке?"
+        
+        await message.answer("👀 Анализирую изображение...")
+        
+        # Анализируем изображение через OpenAI Vision
+        response = await openai_vision(file_url, caption)
+        
+        # Усечение длинных ответов для Telegram
+        if len(response) > settings.MAX_TG_REPLY:
+            response = response[: settings.MAX_TG_REPLY] + "... (ответ усечён)"
+        
+        # Отправляем ответ пользователю
+        await message.answer(response)
+        
+        # Записываем взаимодействие в базу
+        if pool:
+            try:
+                async with pool.acquire() as conn:
+                    await conn.execute(
+                        "INSERT INTO logs (username, command, args, answer) VALUES ($1, $2, $3, $4)",
+                        message.from_user.username,
+                        "vision",
+                        caption,
+                        response,
+                    )
+                    # Сохраняем в истории диалога
+                    await conn.execute(
+                        "INSERT INTO dialog_history (user_id, role, content) VALUES ($1, $2, $3)",
+                        message.from_user.id, "user", f"[Изображение] {caption}"
+                    )
+                    await conn.execute(
+                        "INSERT INTO dialog_history (user_id, role, content) VALUES ($1, $2, $3)",
+                        message.from_user.id, "assistant", response
+                    )
+            except Exception as e:
+                logger.error(f"Ошибка при записи в базу данных: {e}")
+        else:
+            logger.warning("Нет подключения к базе данных, пропускаем запись лога")
+    
+    except Exception as e:
+        logger.error(f"Ошибка при анализе изображения: {e}")
+        await message.answer("❌ Извините, произошла ошибка при анализе изображения.")
+
+
 async def process_text_message(message) -> None:
     """Обрабатывает текстовое сообщение (обычное или из голосового)."""
     global pool
@@ -707,3 +920,27 @@ async def process_text_message(message) -> None:
     except Exception as e:
         logger.error(f"Ошибка обработки сообщения: {e}")
         await message.answer("❌ Извините, произошла ошибка при обработке вашего сообщения.")
+
+
+async def main() -> None:
+    """Главная функция для запуска бота."""
+    logger.info("Запуск Telegram-бота...")
+    
+    # Настройка хендлеров запуска и остановки
+    dp.startup.register(on_startup)
+    dp.shutdown.register(on_shutdown)
+    
+    try:
+        # Запуск бота
+        await dp.start_polling(bot)
+    except KeyboardInterrupt:
+        logger.info("Бот остановлен пользователем")
+    except Exception as e:
+        logger.error(f"Критическая ошибка при запуске бота: {e}")
+    finally:
+        logger.info("Завершение работы бота...")
+
+
+if __name__ == "__main__":
+    # Запуск бота
+    asyncio.run(main())
