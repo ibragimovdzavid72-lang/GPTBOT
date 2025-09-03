@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
     preferred_model TEXT NOT NULL DEFAULT 'gpt-4o', -- Предпочтительная модель OpenAI
     tts_enabled BOOLEAN NOT NULL DEFAULT FALSE, -- Включены ли голосовые ответы
     tts_voice TEXT NOT NULL DEFAULT 'alloy',  -- Голос для синтеза речи
+    personal_assistant_enabled BOOLEAN NOT NULL DEFAULT FALSE, -- Включен ли персональный ассистент
     created_at TIMESTAMP DEFAULT now(),       -- Время создания записи
     updated_at TIMESTAMP DEFAULT now()        -- Время последнего обновления
 );
