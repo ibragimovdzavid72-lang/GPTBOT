@@ -58,7 +58,7 @@ class WebhookManager:
         
         :return: Configured aiohttp application
         """
-        webhook_path = os.getenv("WEBHOOK_PATH", "/webhook")
+        webhook_path = os.getenv("WEBHOOK_PATH", "/")
         webhook_secret = os.getenv("WEBHOOK_SECRET", "telegram_webhook_secret")
         
         # Создаем веб-приложение
@@ -80,7 +80,10 @@ class WebhookManager:
             return web.json_response({"status": "ok", "bot": "telegram_ai_agent_v2"})
         
         app.router.add_get("/health", health_check)
-        app.router.add_get("/", health_check)  # Для корневого пути
+        
+        # Если webhook путь не корневой, добавляем health check на корень
+        if webhook_path != "/":
+            app.router.add_get("/", health_check)
         
         logger.info(f"Webhook app создан с путем: {webhook_path}")
         return app
@@ -115,12 +118,22 @@ class WebhookManager:
         
         return runner
     
+    async def get_telegram_webhook_info(self):
+        """Получаем информацию о webhook от Telegram."""
+        try:
+            webhook_info = await self.bot.get_webhook_info()
+            logger.info(f"📊 Webhook статус: {webhook_info}")
+            return webhook_info
+        except Exception as e:
+            logger.error(f"❌ Ошибка получения webhook инфо: {e}")
+            return None
+    
     @staticmethod
     def get_webhook_info():
         """Получение информации о webhook настройках."""
         return {
             "webhook_url": os.getenv("WEBHOOK_URL"),
-            "webhook_path": os.getenv("WEBHOOK_PATH", "/webhook"),
+            "webhook_path": os.getenv("WEBHOOK_PATH", "/"),
             "webhook_secret": os.getenv("WEBHOOK_SECRET", "telegram_webhook_secret"),
             "port": int(os.getenv("PORT", "8443")),
             "host": os.getenv("HOST", "0.0.0.0")
