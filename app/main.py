@@ -42,6 +42,12 @@ pool: asyncpg.pool.Pool | None = None
 # Кеш для хранения распознанных голосовых сообщений
 voice_messages_cache = {}
 
+# Кеш для хранения описаний изображений для генерации арта
+art_prompts_cache = {}
+
+# Кеш для хранения выбранных размеров арта пользователей
+user_art_sizes = {}
+
 # Улучшенный системный промпт по умолчанию для диалогов
 DEFAULT_SYSTEM_PROMPT = (
     "Ты — интеллектуальный Telegram-бот. Твои задачи:\n"
@@ -270,39 +276,24 @@ async def cmd_suggest_prompt(message: types.Message) -> None:
 
 @dp.message(Command("art"))
 async def cmd_art(message: types.Message) -> None:
-    """Обработчик команды /art для генерации изображений."""
+    """Улучшенный обработчик команды /art для генерации изображений с выбором размера."""
     # Извлекаем текст описания изображения
     text = message.text.replace("/art", "").strip()
     
     if not text:
-        await message.answer("🎨 Укажите описание картинки, например:\n/art кот в очках на скейте")
+        size_menu = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📱 512x512 (быстро)", callback_data="art_size_512")],
+            [InlineKeyboardButton(text="🖼️ 1024x1024 (качество)", callback_data="art_size_1024")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="back_to_main")]
+        ])
+        await message.answer(
+            "🎨 <b>Создание изображения</b>\n\nОпишите, что вы хотите нарисовать:\n\n🎆 <i>Пример: котенок на скейте в очках, стиль аниме</i>\n\nВыберите размер изображения:",
+            reply_markup=size_menu,
+            parse_mode="HTML"
+        )
         return
-    
-    try:
-        # Генерируем изображение через OpenAI
-        image_url = await openai_image(text)
-        # Отправляем изображение пользователю
-        await message.answer_photo(image_url, caption=f"✨ Ваш арт готов!\n\nОписание: {text}")
         
-        # Записываем взаимодействие в базу
-        if pool:
-            try:
-                async with pool.acquire() as conn:
-                    await conn.execute(
-                        "INSERT INTO logs (username, command, args, answer) VALUES ($1, $2, $3, $4)",
-                        message.from_user.username,
-                        "art",
-                        text,
-                        f"Сгенерировано изображение: {image_url}",
-                    )
-            except Exception as e:
-                logger.error(f"Ошибка при записи в базу данных: {e}")
-                # Продолжаем работу, даже если не удалось записать в БД
-        else:
-            logger.warning("Нет подключения к базе данных, пропускаем запись лога")
-    except Exception as e:
-        logger.error(f"Ошибка при генерации изображения: {e}")
-        await message.answer("❌ Извините, произошла ошибка при генерации изображения.")
+    await generate_art_image(message, text)
 
 
 @dp.callback_query()
@@ -447,6 +438,70 @@ async def process_callback(callback_query: types.CallbackQuery) -> None:
             await callback_query.message.answer("🏠 <b>Главное меню</b>", reply_markup=admin_menu)
         else:
             await callback_query.message.answer("🏠 <b>Главное меню</b>", reply_markup=main_menu)
+    
+    # 🎨 Обработчики для генерации изображений
+    elif callback_query.data.startswith("art_size_"):
+        # Выбор размера для генерации арта
+        size = callback_query.data.replace("art_size_", "")
+        size_map = {"512": "512x512", "1024": "1024x1024"}
+        actual_size = size_map.get(size, "1024x1024")
+        
+        await callback_query.message.answer(
+            f"🎨 Опишите, что вы хотите нарисовать:\n\n📏 Размер: {actual_size}\n\n🎆 <i>Пример: котенок на скейте в очках, стиль аниме</i>",
+            parse_mode="HTML"
+        )
+        # Сохраняем выбранный размер для следующего сообщения
+        user_art_sizes[callback_query.from_user.id] = actual_size
+        
+    elif callback_query.data.startswith("generate_similar_"):
+        # Генерация похожего арта на основе описания изображения
+        key = callback_query.data.replace("generate_similar_", "")
+        description = art_prompts_cache.get(key)
+        
+        if description:
+            await bot.send_chat_action(callback_query.message.chat.id, "upload_photo")
+            processing_msg = await callback_query.message.answer("🎨 Создаю похожее изображение...")
+            
+            # Улучшаем промпт для генерации арта
+            art_prompt = f"Прекрасное художественное изображение: {description}, высокое качество, детализированное"
+            
+            try:
+                image_url = await openai_image(art_prompt)
+                await processing_msg.delete()
+                
+                art_menu = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🔄 Генерировать ещё", callback_data=f"regenerate_art_{hash(art_prompt)%10000}")],
+                    [InlineKeyboardButton(text="🔄 Сбросить диалог", callback_data="reset_context")]
+                ])
+                
+                art_prompts_cache[f"{hash(art_prompt)%10000}"] = art_prompt
+                
+                await callback_query.message.answer_photo(
+                    image_url,
+                    caption=f"⚡ <b>Похожий арт создан!</b>\n\n🎨 Основа: <i>{description[:100]}...</i>",
+                    reply_markup=art_menu,
+                    parse_mode="HTML"
+                )
+                
+                # Очищаем кеш
+                art_prompts_cache.pop(key, None)
+                
+            except Exception as e:
+                await processing_msg.delete()
+                logger.error(f"Ошибка генерации похожего арта: {e}")
+                await callback_query.message.answer("❌ Не удалось сгенерировать похожее изображение. Попробуйте позже.")
+        else:
+            await callback_query.message.answer("❌ Описание изображения не найдено. Попробуйте отправить изображение снова.")
+    
+    elif callback_query.data.startswith("regenerate_art_"):
+        # Повторная генерация арта
+        key = callback_query.data.replace("regenerate_art_", "")
+        prompt = art_prompts_cache.get(key)
+        
+        if prompt:
+            await generate_art_image(callback_query.message, prompt)
+        else:
+            await callback_query.message.answer("❌ Промпт не найден. Попробуйте создать новое изображение через /art.")
 
 
 @dp.message(Command("admin_stats"))
@@ -481,6 +536,141 @@ async def cmd_mode(message: types.Message, command: CommandObject) -> None:
 
 
 @dp.message(Command("reset_context"))
+async def handle_image_message(message: types.Message) -> None:
+    """Улучшенный обработчик сообщений с изображениями."""
+    global pool
+    
+    # Проверяем, активен ли бот
+    if not await is_bot_active(pool):
+        await message.answer("⛔ Бот временно отключён администратором.")
+        return
+    
+    # Показываем индикатор "печатает"
+    await bot.send_chat_action(message.chat.id, "typing")
+    processing_msg = await message.answer("👀 Анализирую изображение...")
+    
+    try:
+        # Получаем самое большое изображение
+        photo = message.photo[-1]
+        file_info = await bot.get_file(photo.file_id)
+        file_path = file_info.file_path
+        file_url = f"https://api.telegram.org/file/bot{settings.TELEGRAM_BOT_TOKEN}/{file_path}"
+        
+        # Получаем текст сообщения
+        caption = message.caption or "Опиши что изображено на этой картинке подробно"
+        
+        # Скачиваем изображение
+        import aiohttp
+        async with aiohttp.ClientSession() as session:
+            async with session.get(file_url) as resp:
+                if resp.status != 200:
+                    raise Exception(f"Не удалось скачать: {resp.status}")
+                image_data = await resp.read()
+        
+        # Анализируем через OpenAI Vision
+        try:
+            response = await openai_vision(image_data, caption)
+        except Exception as e:
+            logger.error(f"Ошибка анализа: {e}")
+            response = "❌ Не удалось проанализировать изображение."
+        
+        # Усечение длинных ответов
+        if len(response) > settings.MAX_TG_REPLY:
+            response = response[:settings.MAX_TG_REPLY] + "... (ответ усечён)"
+        
+        await processing_msg.delete()
+        
+        # Кнопки для дополнительных действий
+        image_menu = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⚡ Сгенерировать похожий арт", callback_data=f"generate_similar_{hash(response)%10000}")],
+            [InlineKeyboardButton(text="🔄 Сбросить диалог", callback_data="reset_context")]
+        ])
+        
+        # Сохраняем описание
+        art_prompts_cache[f"{hash(response)%10000}"] = response
+        
+        await message.answer(
+            f"👀 <b>Анализ изображения:</b>\n\n{response}",
+            reply_markup=image_menu,
+            parse_mode="HTML"
+        )
+        
+        # Записываем в базу
+        if pool:
+            try:
+                async with pool.acquire() as conn:
+                    await conn.execute(
+                        "INSERT INTO logs (username, command, args, answer) VALUES ($1, $2, $3, $4)",
+                        message.from_user.username, "vision", caption, response
+                    )
+                    await conn.execute(
+                        "INSERT INTO dialog_history (user_id, role, content) VALUES ($1, $2, $3)",
+                        message.from_user.id, "user", f"[Изображение] {caption}"
+                    )
+                    await conn.execute(
+                        "INSERT INTO dialog_history (user_id, role, content) VALUES ($1, $2, $3)",
+                        message.from_user.id, "assistant", response
+                    )
+            except Exception as e:
+                logger.error(f"Ошибка записи в БД: {e}")
+    
+    except Exception as e:
+        await processing_msg.delete()
+        logger.error(f"Ошибка анализа изображения: {e}")
+        await message.answer("❌ Произошла ошибка при анализе изображения.")
+
+
+async def generate_art_image(message: types.Message, text: str, size: str = "1024x1024") -> None:
+    """Генерирует изображение с указанным размером."""
+    try:
+        # Показываем индикатор обработки
+        await bot.send_chat_action(message.chat.id, "upload_photo")
+        processing_msg = await message.answer(f"🎨 Генерирую изображение {size}...")
+        
+        # Генерируем изображение
+        image_url = await openai_image(text, size=size)
+        
+        # Удаляем сообщение об обработке
+        await processing_msg.delete()
+        
+        # Кнопки для дополнительных действий
+        art_menu = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Генерировать ещё", callback_data=f"regenerate_art_{hash(text)%10000}")],
+            [InlineKeyboardButton(text="🔄 Сбросить диалог", callback_data="reset_context")]
+        ])
+        
+        # Сохраняем промпт для повторной генерации
+        art_prompts_cache[f"{hash(text)%10000}"] = text
+        
+        # Отправляем изображение
+        await message.answer_photo(
+            image_url, 
+            caption=f"✨ <b>Арт готов!</b>\n\n🎨 Описание: <i>{text}</i>\n📱 Размер: {size}",
+            reply_markup=art_menu,
+            parse_mode="HTML"
+        )
+        
+        # Записываем в базу
+        if pool:
+            try:
+                async with pool.acquire() as conn:
+                    await conn.execute(
+                        "INSERT INTO logs (username, command, args, answer) VALUES ($1, $2, $3, $4)",
+                        message.from_user.username,
+                        "art",
+                        f"{text} ({size})",
+                        f"Сгенерировано: {image_url}",
+                    )
+            except Exception as e:
+                logger.error(f"Ошибка записи в БД: {e}")
+                
+    except Exception as e:
+        if 'processing_msg' in locals():
+            await processing_msg.delete()
+        logger.error(f"Ошибка генерации изображения: {e}")
+        await message.answer("❌ Произошла ошибка при генерации изображения. Попробуйте упростить описание.")
+
+
 async def cmd_reset_context(message: types.Message) -> None:
     """Обработчик команды /reset_context для сброса контекста диалога."""
     global pool
@@ -542,13 +732,17 @@ async def handle_message(message: types.Message) -> None:
 
 
 async def handle_voice_message(message: types.Message) -> None:
-    """Обработчик голосовых сообщений."""
+    """Улучшенный обработчик голосовых сообщений с индикатором обработки."""
     global pool
     
     # Проверяем, активен ли бот
     if not await is_bot_active(pool):
         await message.answer("⛔ Бот временно отключён администратором.")
         return
+    
+    # Показываем индикатор "печатает"
+    await bot.send_chat_action(message.chat.id, "typing")
+    processing_msg = await message.answer("⚙️ Обрабатываю голосовое сообщение...")
     
     try:
         # Получаем файл голосового сообщения
@@ -567,47 +761,69 @@ async def handle_voice_message(message: types.Message) -> None:
             temp_filename = temp_file.name
             
         # Скачиваем файл
-        async with aiohttp.ClientSession() as session:
-            async with session.get(file_url) as response:
-                if response.status == 200:
-                    with open(temp_filename, 'wb') as f:
-                        f.write(await response.read())
-                else:
-                    raise Exception(f"Не удалось скачать голосовое сообщение: {response.status}")
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(file_url) as response:
+                    if response.status == 200:
+                        with open(temp_filename, 'wb') as f:
+                            f.write(await response.read())
+                    else:
+                        raise Exception(f"Не удалось скачать голосовое сообщение: {response.status}")
+        except Exception as e:
+            await processing_msg.delete()
+            logger.error(f"Ошибка скачивания голосового файла: {e}")
+            await message.answer("❌ Не удалось скачать голосовое сообщение. Попробуйте ещё раз.")
+            return
         
         # Распознаем речь с помощью OpenAI Whisper
         try:
+            await bot.send_chat_action(message.chat.id, "typing")
             recognized_text = await openai_stt(temp_filename)
+            
+            if not recognized_text or len(recognized_text.strip()) == 0:
+                raise Exception("Пустой результат распознавания")
+                
         except Exception as e:
+            await processing_msg.delete()
             logger.error(f"Ошибка распознавания речи: {e}")
             # Удаляем временный файл
             try:
                 os.unlink(temp_filename)
             except Exception:
                 pass
-            await message.answer("❌ Извините, не удалось распознать голосовое сообщение. Попробуйте отправить его снова или напишите текстовое сообщение.")
+            await message.answer("❌ Не удалось распознать голосовое сообщение. Проверьте качество записи или попробуйте снова.")
             return
         
         # Удаляем временный файл
-        os.unlink(temp_filename)
+        try:
+            os.unlink(temp_filename)
+        except Exception:
+            pass
         
-        # Отправляем пользователю распознанный текст и вопрос о типе ответа
+        # Удаляем сообщение об обработке
+        await processing_msg.delete()
+        
+        # Отправляем пользователю распознанный текст и кнопки выбора ответа
         voice_menu = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔊 Ответить голосом", callback_data=f"voice_response_{message.from_user.id}_{hash(recognized_text)%10000}")],
-            [InlineKeyboardButton(text="📝 Обычный ответ", callback_data=f"text_response_{message.from_user.id}_{hash(recognized_text)%10000}")]
+            [InlineKeyboardButton(text="📝 Текстовый ответ", callback_data=f"text_response_{message.from_user.id}_{hash(recognized_text)%10000}")],
+            [InlineKeyboardButton(text="🔄 Сбросить диалог", callback_data="reset_context")]
         ])
         
-        # Сохраняем распознанный текст в глобальном словаре для обработки callback'ов
-        voice_messages_cache[f"{message.from_user.id}_{hash(recognized_text)%10000}"] = recognized_text
+        # Сохраняем распознанный текст в кеше
+        cache_key = f"{message.from_user.id}_{hash(recognized_text)%10000}"
+        voice_messages_cache[cache_key] = recognized_text
         
         await message.answer(
-            f"🎤 Распознанный текст:\n\n{recognized_text}\n\n🤔 Как ответить?",
-            reply_markup=voice_menu
+            f"🎤 <b>Распознано:</b>\n\n<i>{recognized_text}</i>\n\n🤔 Как ответить?",
+            reply_markup=voice_menu,
+            parse_mode="HTML"
         )
         
     except Exception as e:
-        logger.error(f"Ошибка при обработке голосового сообщения: {e}")
-        await message.answer("❌ Извините, произошла ошибка при распознавании голосового сообщения.")
+        await processing_msg.delete()
+        logger.error(f"Общая ошибка при обработке голосового сообщения: {e}")
+        await message.answer("❌ Произошла ошибка при обработке голосового сообщения. Попробуйте ещё раз.")
 
 
 async def set_user_model(message: types.Message, model: str) -> None:
