@@ -193,3 +193,57 @@ async def openai_stt(audio_path: str) -> str:
                 os.unlink(converted_path)
             except Exception:
                 pass  # Игнорируем ошибки удаления
+
+
+async def openai_embeddings(text: str) -> list:
+    """
+    Создает эмбеддинг для текста с помощью OpenAI.
+    
+    :param text: Текст для создания эмбеддинга
+    :return: Вектор эмбеддинга
+    :raises Exception: При ошибке взаимодействия с API
+    """
+    try:
+        # Ограничиваем длину текста
+        if len(text) > 8000:
+            text = text[:8000] + "..."
+            
+        response = await client.embeddings.create(
+            model="text-embedding-3-small",
+            input=text
+        )
+        return response.data[0].embedding
+    except Exception as e:
+        raise Exception(f"Ошибка при создании эмбеддинга: {str(e)}")
+
+
+async def openai_chat_with_personal_context(system_prompt: str, messages: list, user_context: str = "", model: str = None) -> str:
+    """
+    Отправляет запрос к модели OpenAI с учетом персонального контекста пользователя.
+    
+    :param system_prompt: Системный промпт
+    :param messages: История сообщений
+    :param user_context: Персональный контекст пользователя из векторной памяти
+    :param model: Модель для использования
+    :return: Ответ модели
+    :raises Exception: При ошибке взаимодействия с API
+    """
+    try:
+        # Расширяем системный промпт персональным контекстом
+        enhanced_system_prompt = system_prompt
+        if user_context:
+            enhanced_system_prompt += f"\n\n{user_context}"
+        
+        # Формируем полный список сообщений
+        full_messages = [{"role": "system", "content": enhanced_system_prompt}]
+        full_messages.extend(messages)
+        
+        response = await client.chat.completions.create(
+            model=model or settings.OPENAI_MODEL,
+            messages=full_messages,
+            temperature=settings.TEMPERATURE,
+            timeout=settings.REQUEST_TIMEOUT
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        raise Exception(f"Ошибка при вызове OpenAI API с персональным контекстом: {str(e)}")
