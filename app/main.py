@@ -536,7 +536,17 @@ async def handle_voice_message(message: types.Message) -> None:
                     raise Exception(f"Не удалось скачать голосовое сообщение: {response.status}")
         
         # Распознаем речь с помощью OpenAI Whisper
-        recognized_text = await openai_stt(temp_filename)
+        try:
+            recognized_text = await openai_stt(temp_filename)
+        except Exception as e:
+            logger.error(f"Ошибка распознавания речи: {e}")
+            # Удаляем временный файл
+            try:
+                os.unlink(temp_filename)
+            except Exception:
+                pass
+            await message.answer("❌ Извините, не удалось распознать голосовое сообщение. Попробуйте отправить его снова или напишите текстовое сообщение.")
+            return
         
         # Удаляем временный файл
         os.unlink(temp_filename)
@@ -759,7 +769,11 @@ async def handle_image_message(message: types.Message) -> None:
                 image_data = await resp.read()
         
         # Анализируем изображение через OpenAI Vision
-        response = await openai_vision(image_data, caption)
+        try:
+            response = await openai_vision(image_data, caption)
+        except Exception as e:
+            logger.error(f"Ошибка анализа изображения: {e}")
+            response = "❌ Извините, не удалось проанализировать изображение. Попробуйте отправить другое изображение или опишите что на нём текстом."
         
         # Усечение длинных ответов для Telegram
         if len(response) > settings.MAX_TG_REPLY:
@@ -886,7 +900,25 @@ async def process_text_message(message) -> None:
         dialog_history.append({"role": "user", "content": message.text})
         
         # Получаем ответ от OpenAI с учетом истории
-        response = await openai_chat_with_history(DEFAULT_SYSTEM_PROMPT, dialog_history, user_model)
+        try:
+            response = await openai_chat_with_history(DEFAULT_SYSTEM_PROMPT, dialog_history, user_model)
+        except Exception as e:
+            logger.error(f"Ошибка OpenAI API: {e}")
+            # Fallback на простой ответ
+            response = "❌ Извините, сейчас проблемы с AI сервисом. Попробуйте позже или обратитесь к администратору."
+            # Записываем ошибку в логи для мониторинга
+            if pool:
+                try:
+                    async with pool.acquire() as conn:
+                        await conn.execute(
+                            "INSERT INTO logs (username, command, args, answer) VALUES ($1, $2, $3, $4)",
+                            message.from_user.username,
+                            "error_api",
+                            str(e),
+                            "❌ OpenAI API недоступен"
+                        )
+                except Exception:
+                    pass  # Игнорируем ошибки логирования
         
         # Усечение длинных ответов для Telegram
         if len(response) > settings.MAX_TG_REPLY:
@@ -991,6 +1023,13 @@ async def main() -> None:
             runner = await webhook_manager.run_webhook_server()
             
             logger.info("✅ Webhook сервер запущен успешно!")
+            
+            # Проверяем статус webhook
+            webhook_info = await webhook_manager.get_telegram_webhook_info()
+            if webhook_info:
+                logger.info(f"📊 Webhook URL: {webhook_info.url}")
+                if webhook_info.last_error_date:
+                    logger.warning(f"⚠️ Последняя ошибка: {webhook_info.last_error_message}")
             
             # Ожидаем завершения
             try:
