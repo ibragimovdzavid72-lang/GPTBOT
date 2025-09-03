@@ -21,9 +21,10 @@ import asyncpg
 
 from .config import settings
 from .suggest import generate_prompt_from_logs
-from .ai import openai_chat, openai_image, openai_vision, openai_tts, openai_stt, openai_chat_with_history
+from .ai import openai_chat, openai_image, openai_vision, openai_tts, openai_stt, openai_chat_with_history, openai_chat_with_personal_context
 from .admin import is_admin, cmd_admin_stats, cmd_errors, cmd_bot_on, cmd_bot_off, is_bot_active
 from .webhook import WebhookManager
+from .vector_memory import personal_assistant
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -47,6 +48,9 @@ art_prompts_cache = {}
 
 # Кеш для хранения выбранных размеров арта пользователей
 user_art_sizes = {}
+
+# Состояния пользователей для обработки персонального ассистента
+user_states = {}
 
 # Улучшенный системный промпт по умолчанию для диалогов
 DEFAULT_SYSTEM_PROMPT = (
@@ -75,34 +79,68 @@ WELCOME_TEXT = """
 Или просто напишите любой вопрос и получите умные ответы от современного AI!
 """
 
-# Создание главного меню с кнопками для всех команд (упрощённое)
+# Создание главного меню с категоризацией функций
 main_menu = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="📊 Статистика", callback_data="stats"),
-     InlineKeyboardButton(text="💡 Умный промпт", callback_data="suggest_prompt")],
-    [InlineKeyboardButton(text="🔄 Сброс контекста", callback_data="reset_context"),
-     InlineKeyboardButton(text="🤖 Модель ИИ", callback_data="select_model")],
-    [InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help"),
-     InlineKeyboardButton(text="💬 Начать чат", callback_data="chat")],
+    [InlineKeyboardButton(text="💬 ИИ Чат", callback_data="ai_chat_menu"),
+     InlineKeyboardButton(text="🎨 Творчество", callback_data="creative_menu")],
+    [InlineKeyboardButton(text="📊 Аналитика", callback_data="analytics_menu"),
+     InlineKeyboardButton(text="🔧 Настройки", callback_data="settings_menu")],
+    [InlineKeyboardButton(text="🧠 Личный ассистент", callback_data="personal_assistant"),
+     InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")],
 ])
 
-# Создание расширенного меню с админ-панелью для администраторов
+# Расширенное меню для администраторов
 admin_menu = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="📊 Статистика", callback_data="stats"),
+    [InlineKeyboardButton(text="💬 ИИ Чат", callback_data="ai_chat_menu"),
+     InlineKeyboardButton(text="🎨 Творчество", callback_data="creative_menu")],
+    [InlineKeyboardButton(text="📊 Аналитика", callback_data="analytics_menu"),
+     InlineKeyboardButton(text="🔧 Настройки", callback_data="settings_menu")],
+    [InlineKeyboardButton(text="🧠 Личный ассистент", callback_data="personal_assistant"),
+     InlineKeyboardButton(text="👑 Админ-панель", callback_data="admin_panel")],
+    [InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")],
+])
+
+# Меню ИИ Чата
+ai_chat_menu = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="💬 Начать чат", callback_data="start_chat"),
+     InlineKeyboardButton(text="🤖 Выбрать модель", callback_data="select_model")],
+    [InlineKeyboardButton(text="🔄 Сбросить контекст", callback_data="reset_context"),
      InlineKeyboardButton(text="💡 Умный промпт", callback_data="suggest_prompt")],
-    [InlineKeyboardButton(text="🔄 Сброс контекста", callback_data="reset_context"),
-     InlineKeyboardButton(text="🤖 Модель ИИ", callback_data="select_model")],
-    [InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help"),
-     InlineKeyboardButton(text="💬 Начать чат", callback_data="chat")],
-    [InlineKeyboardButton(text="👑 Админ-панель", callback_data="admin_panel")],
+    [InlineKeyboardButton(text="⬅️ Главное меню", callback_data="back_to_main")],
+])
+
+# Меню творчества
+creative_menu = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="🎨 Создать изображение", callback_data="create_image")],
+    [InlineKeyboardButton(text="🖼️ Анализ изображений", callback_data="image_analysis_info")],
+    [InlineKeyboardButton(text="⬅️ Главное меню", callback_data="back_to_main")],
+])
+
+# Меню аналитики
+analytics_menu = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="📊 Общая статистика", callback_data="stats")],
+    [InlineKeyboardButton(text="📈 Моя активность", callback_data="user_stats")],
+    [InlineKeyboardButton(text="⬅️ Главное меню", callback_data="back_to_main")],
+])
+
+# Меню настроек
+settings_menu = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="🤖 Модель ИИ", callback_data="select_model"),
+     InlineKeyboardButton(text="🔊 Голосовые ответы", callback_data="tts_settings")],
+    [InlineKeyboardButton(text="🌐 Язык интерфейса", callback_data="language_settings"),
+     InlineKeyboardButton(text="🔔 Уведомления", callback_data="notification_settings")],
+    [InlineKeyboardButton(text="⬅️ Главное меню", callback_data="back_to_main")],
 ])
 
 # Меню админских команд
 admin_commands_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="📊 Админ статистика", callback_data="admin_stats"),
-     InlineKeyboardButton(text="⚠️ Ошибки", callback_data="errors")],
+     InlineKeyboardButton(text="⚠️ Ошибки системы", callback_data="errors")],
     [InlineKeyboardButton(text="✅ Включить бота", callback_data="bot_on"),
      InlineKeyboardButton(text="❌ Выключить бота", callback_data="bot_off")],
-    [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_main")],
+    [InlineKeyboardButton(text="🔧 Управление", callback_data="admin_management"),
+     InlineKeyboardButton(text="📋 Логи системы", callback_data="admin_logs")],
+    [InlineKeyboardButton(text="⬅️ Главное меню", callback_data="back_to_main")],
 ])
 
 # Создание меню настроек
@@ -171,7 +209,7 @@ async def on_shutdown() -> None:
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message) -> None:
-    """Обработчик команды /start."""
+    """Обработчик команды /start - единственная оставшаяся слэш команда."""
     # Формируем персонализированное приветствие
     username = message.from_user.username or message.from_user.first_name or "Пользователь"
     current_date = datetime.now().strftime("%d.%m.%Y")
@@ -185,36 +223,52 @@ async def cmd_start(message: types.Message) -> None:
         await message.answer(welcome_text, reply_markup=main_menu)
 
 
-@dp.message(Command("help"))
-async def cmd_help(message: types.Message) -> None:
-    """Обработчик команды /help."""
-    help_text = (
-        "ℹ️ <b>Интерфейс бота:</b>\n\n"
-        "🚀 <b>Основной способ управления:</b>\n"
-        "Используйте кнопки меню для быстрого доступа к всем функциям!\n\n"
-        "🎯 <b>Доступные команды (опционально):</b>\n"
-        "/start - Главное меню\n"
-        "/help - Показать справку\n"
-        "/stats - Показать статистику\n"
-        "/suggest_prompt - Предложить улучшенный промпт\n"
-        "/art - Создать изображение по описанию\n"
-        "/mode - Выбрать модель ИИ\n"
-        "/reset_context - Сбросить контекст диалога\n\n"
-        "💬 <b>Общение:</b> Просто напишите сообщение, отправьте голосовое сообщение или изображение!"
-    )
+# ============================================================================
+# УДАЛЕНО: Все слэш команды заменены на инлайн кнопки
+# /help, /stats, /suggest_prompt, /art, /mode, /reset_context, 
+# /personal, /admin, /admin_stats, /errors, /bot_on, /bot_off
+# Теперь все функции доступны через интуитивные меню
+# ============================================================================
+
+# Вспомогательные функции для callback обработчиков
+
+async def show_user_personal_stats(message: types.Message, user_id: int) -> None:
+    """Показывает персональную статистику пользователя."""
+    global pool
     
-    # Добавляем информацию об админских командах для администраторов
-    if is_admin(message.from_user.id):
-        help_text += (
-            "\n\n👑 <b>Админ-команды:</b>\n"
-            "/admin - Админ-панель\n"
-            "/admin_stats - Статистика бота\n"
-            "/errors - Последние ошибки\n"
-            "/bot_on - Включить бота\n"
-            "/bot_off - Выключить бота"
-        )
+    if not pool:
+        await message.answer("⛔ База данных недоступна.")
+        return
     
-    await message.answer(help_text)
+    try:
+        async with pool.acquire() as conn:
+            user_logs = await conn.fetchval(
+                "SELECT COUNT(*) FROM logs WHERE username = $1",
+                message.from_user.username or str(user_id)
+            )
+            
+            user_settings = await conn.fetchrow(
+                "SELECT preferred_model, tts_enabled, personal_assistant_enabled FROM user_settings WHERE user_id = $1",
+                user_id
+            )
+            
+        stats_text = f"📈 <b>Моя активность</b>\n\n"
+        stats_text += f"💬 Сообщений: {user_logs}\n"
+        
+        if user_settings:
+            stats_text += f"🤖 Модель: {user_settings['preferred_model'] or 'gpt-4o'}\n"
+            stats_text += f"🔊 TTS: {'\u2705' if user_settings['tts_enabled'] else '\u274c'}\n"
+            stats_text += f"🧠 Личный ассистент: {'\u2705' if user_settings['personal_assistant_enabled'] else '\u274c'}\n"
+        
+        pa_stats = await personal_assistant.get_user_stats(user_id)
+        if pa_stats.get("total_memories", 0) > 0:
+            stats_text += f"\n🧠 Память: {pa_stats['total_memories']} записей"
+        
+        await message.answer(stats_text, parse_mode="HTML")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при получении статистики: {e}")
+        await message.answer("❌ Ошибка получения статистики.")
 
 
 @dp.message(Command("stats"))
@@ -301,17 +355,69 @@ async def process_callback(callback_query: types.CallbackQuery) -> None:
     """Обработчик нажатий на кнопки меню."""
     await callback_query.answer()
     
-    if callback_query.data == "chat":
-        await callback_query.message.answer("💬 Просто отправьте мне сообщение, и я отвечу!")
-    elif callback_query.data == "stats":
-        # Вызываем обработчик команды /stats
-        await cmd_stats(callback_query.message)
-    elif callback_query.data == "art":
-        # Просим ввести описание для генерации арта
-        await callback_query.message.answer("🎨 <b>Создание изображения</b>\n\nОпишите, что вы хотите нарисовать:\n\nПример: котенок на скейте в очках")
-    elif callback_query.data == "suggest_prompt":
-        # Вызываем обработчик команды /suggest_prompt
-        await cmd_suggest_prompt(callback_query.message)
+    # 📂 Навигация по категориям меню
+    if callback_query.data == "ai_chat_menu":
+        await callback_query.message.answer("💬 <b>ИИ Чат</b>\n\nВыберите действие:", reply_markup=ai_chat_menu, parse_mode="HTML")
+    elif callback_query.data == "creative_menu":
+        await callback_query.message.answer("🎨 <b>Творчество</b>\n\nИскусство и создание:", reply_markup=creative_menu, parse_mode="HTML")
+    elif callback_query.data == "analytics_menu":
+        await callback_query.message.answer("📊 <b>Аналитика</b>\n\nСтатистика и анализ:", reply_markup=analytics_menu, parse_mode="HTML")
+    elif callback_query.data == "settings_menu":
+        await callback_query.message.answer("🔧 <b>Настройки</b>\n\nПерсонализация работы бота:", reply_markup=settings_menu, parse_mode="HTML")
+    
+    # 💬 Обработчики ИИ чата
+    elif callback_query.data == "start_chat":
+        await callback_query.message.answer("💬 Просто напишите мне сообщение, и я отвечу!\n\n🎤 Можно также отправить голосовое сообщение или изображение.")
+    
+    # 🎨 Обработчики творчества
+    elif callback_query.data == "create_image":
+        size_menu = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📱 512x512 (быстро)", callback_data="art_size_512")],
+            [InlineKeyboardButton(text="🖼️ 1024x1024 (качество)", callback_data="art_size_1024")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="creative_menu")]
+        ])
+        await callback_query.message.answer(
+            "🎨 <b>Создание изображения</b>\n\nОпишите, что вы хотите нарисовать:\n\n🎆 <i>Пример: котенок на скейте в очках, стиль аниме</i>\n\nВыберите размер изображения:",
+            reply_markup=size_menu,
+            parse_mode="HTML"
+        )
+    elif callback_query.data == "image_analysis_info":
+        await callback_query.message.answer(
+            "🖼️ <b>Анализ изображений</b>\n\n"
+            "🔍 Просто отправьте мне изображение, и я:\n\n"
+            "• Опишу что на нём изображено\n"
+            "• Отвечу на вопросы о контенте\n"
+            "• Помогу с анализом и интерпретацией\n\n"
+            "📷 Поддерживаются все популярные форматы изображений.",
+            parse_mode="HTML"
+        )
+    
+    # 📊 Обработчики аналитики
+    elif callback_query.data == "user_stats":
+        await show_user_personal_stats(callback_query.message, callback_query.from_user.id)
+    
+    # 🔧 Обработчики настроек
+    elif callback_query.data == "language_settings":
+        language_menu = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🇷🇺 Русский", callback_data="set_lang_ru"),
+             InlineKeyboardButton(text="🇺🇸 English", callback_data="set_lang_en")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="settings_menu")]
+        ])
+        await callback_query.message.answer(
+            "🌐 <b>Язык интерфейса</b>\n\nВыберите язык:",
+            reply_markup=language_menu,
+            parse_mode="HTML"
+        )
+    elif callback_query.data == "notification_settings":
+        await callback_query.message.answer(
+            "🔔 <b>Уведомления</b>\n\n"
+            "Эта функция будет доступна в следующих обновлениях.",
+            parse_mode="HTML"
+        )
+    elif callback_query.data.startswith("set_lang_"):
+        lang = callback_query.data.replace("set_lang_", "")
+        lang_names = {"ru": "Русский", "en": "English"}
+        await callback_query.message.answer(f"✅ Язык установлен: {lang_names.get(lang, lang)}")
     elif callback_query.data == "reset_context":
         # Вызываем команду сброса контекста
         await cmd_reset_context(callback_query.message)
@@ -321,8 +427,33 @@ async def process_callback(callback_query: types.CallbackQuery) -> None:
         else:
             await callback_query.message.answer("🏠 <b>Главное меню</b>", reply_markup=main_menu)
     elif callback_query.data == "help":
-        # Вызываем обработчик команды /help
-        await cmd_help(callback_query.message)
+        # Отображаем обновлённую справку
+        help_text = (
+            "ℹ️ <b>Интерфейс бота:</b>\n\n"
+            "🎆 <b>Как пользоваться:</b>\n"
+            "• Навигация по кнопкам меню\n"
+            "• Простое общение текстом\n"
+            "• Голосовые сообщения\n"
+            "• Отправка изображений\n\n"
+            "📋 <b>Основные разделы:</b>\n"
+            "💬 ИИ Чат - Общение с ИИ\n"
+            "🎨 Творчество - Создание изображений\n"
+            "📊 Аналитика - Статистика использования\n"
+            "🔧 Настройки - Персонализация\n"
+            "🧠 Личный ассистент - Векторная память\n\n"
+            "🚀 <b>Начните с /start</b> для возвращения в главное меню!"
+        )
+        
+        # Добавляем информацию об админских возможностях
+        if is_admin(callback_query.from_user.id):
+            help_text += (
+                "\n\n👑 <b>Админ-возможности:</b>\n"
+                "• Мониторинг системы\n"
+                "• Управление ботом\n"
+                "• Просмотр ошибок"
+            )
+        
+        await callback_query.message.answer(help_text, parse_mode="HTML")
     elif callback_query.data == "admin_panel":
         # Проверяем, является ли пользователь администратором с расширенным логированием
         user_id = callback_query.from_user.id
@@ -342,6 +473,9 @@ async def process_callback(callback_query: types.CallbackQuery) -> None:
             await callback_query.message.answer(f"⛔ У вас нет доступа к админ-панели.\n\n📝 Ваш ID: {user_id}\n\n💡 Для получения доступа обратитесь к администратору.")
     elif callback_query.data == "select_model":
         await callback_query.message.answer("🤖 <b>Выберите модель ИИ</b>", reply_markup=model_selection_menu)
+    elif callback_query.data == "personal_assistant":
+        # Показываем меню персонального ассистента
+        await show_personal_assistant_menu(callback_query.message, callback_query.from_user.id)
     elif callback_query.data == "tts_settings":
         # Показываем текущие настройки TTS и предлагаем изменить
         await show_tts_settings(callback_query.message)
@@ -502,6 +636,62 @@ async def process_callback(callback_query: types.CallbackQuery) -> None:
             await generate_art_image(callback_query.message, prompt)
         else:
             await callback_query.message.answer("❌ Промпт не найден. Попробуйте создать новое изображение через /art.")
+    
+    # 🧠 Обработчики для персонального ассистента
+    elif callback_query.data == "pa_add_memory":
+        await callback_query.message.answer(
+            "🧠 <b>Добавить память</b>\n\n"
+            "📝 Напишите что-то, что вы хотите, чтобы я запомнил о вас:\n\n"
+            "💡 <i>Примеры:</i>\n"
+            "• Мне нравится стиль минимализм\n"
+            "• Я работаю программистом\n"
+            "• Предпочитаю краткие ответы\n"
+            "• Я изучаю Python",
+            parse_mode="HTML"
+        )
+        # Переключаем пользователя в режим добавления памяти
+        # Будем обрабатывать следующее сообщение как память
+        user_states[callback_query.from_user.id] = "adding_memory"
+    
+    elif callback_query.data == "pa_view_stats":
+        # Показываем статистику памяти пользователя
+        await show_personal_memory_stats(callback_query.message, callback_query.from_user.id)
+    
+    elif callback_query.data == "pa_clear_memory":
+        # Подтверждение очистки памяти
+        confirm_menu = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Да, очистить всё", callback_data="pa_confirm_clear")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="personal_assistant")]
+        ])
+        await callback_query.message.answer(
+            "⚠️ <b>Внимание!</b>\n\n"
+            "Вы уверены, что хотите удалить всю персональную память?\n"
+            "Это действие необратимо.",
+            reply_markup=confirm_menu,
+            parse_mode="HTML"
+        )
+    
+    elif callback_query.data == "pa_confirm_clear":
+        # Очищаем память пользователя
+        await personal_assistant.clear_user_memory(callback_query.from_user.id)
+        await callback_query.message.answer(
+            "🗑️ <b>Память очищена</b>\n\n"
+            "Вся ваша персональная память была удалена.",
+            parse_mode="HTML"
+        )
+        # Возвращаемся в главное меню
+        if is_admin(callback_query.from_user.id):
+            await callback_query.message.answer("🏠 <b>Главное меню</b>", reply_markup=admin_menu)
+        else:
+            await callback_query.message.answer("🏠 <b>Главное меню</b>", reply_markup=main_menu)
+    
+    elif callback_query.data == "pa_toggle_mode":
+        # Переключаем режим персонального ассистента
+        await toggle_personal_assistant_mode(callback_query.message, callback_query.from_user.id)
+    
+    elif callback_query.data == "back_to_pa":
+        # Возвращаемся в меню персонального ассистента
+        await show_personal_assistant_menu(callback_query.message, callback_query.from_user.id)
 
 
 @dp.message(Command("admin_stats"))
@@ -691,6 +881,12 @@ async def cmd_reset_context(message: types.Message) -> None:
     except Exception as e:
         logger.error(f"Ошибка при сбросе контекста: {e}")
         await message.answer("❌ Произошла ошибка при сбросе контекста. Попробуйте позже.")
+
+
+@dp.message(Command("personal"))
+async def cmd_personal(message: types.Message) -> None:
+    """Обработчик команды /personal для быстрого доступа к персональному ассистенту."""
+    await show_personal_assistant_menu(message, message.from_user.id)
 
 
 @dp.message(Command("admin"))
@@ -1210,6 +1406,39 @@ async def process_text_message(message) -> None:
     if not message.text:
         return
     
+    # Проверяем состояние пользователя для персонального ассистента
+    user_id = message.from_user.id
+    user_state = user_states.get(user_id)
+    
+    # Если пользователь добавляет память
+    if user_state == "adding_memory":
+        try:
+            await personal_assistant.add_user_memory(
+                user_id, 
+                message.text, 
+                "custom",
+                {"category": "user_added"}
+            )
+            user_states.pop(user_id, None)  # Убираем состояние
+            
+            await message.answer(
+                "✅ <b>Память сохранена!</b>\n\n"
+                "🧠 Я запомнил эту информацию и буду учитывать её в будущих ответах.",
+                parse_mode="HTML"
+            )
+            
+            # Показываем меню персонального ассистента
+            await show_personal_assistant_menu(message, user_id)
+            return
+            
+        except Exception as e:
+            logger.error(f"Ошибка при добавлении памяти: {e}")
+            user_states.pop(user_id, None)  # Убираем состояние
+            await message.answer(
+                "❌ Произошла ошибка при сохранении памяти. Попробуйте позже."
+            )
+            return
+    
     # Проверяем, активен ли бот
     if not await is_bot_active(pool):
         await message.answer("⛔ Бот временно отключён администратором.")
@@ -1289,9 +1518,28 @@ async def process_text_message(message) -> None:
         # Добавляем текущее сообщение в историю
         dialog_history.append({"role": "user", "content": message.text})
         
-        # Получаем ответ от OpenAI с учетом истории
+        # Проверяем, включён ли персональный режим
+        pa_enabled = await get_personal_assistant_mode(user_id)
+        
+        # Получаем ответ от OpenAI с учётом истории и персонального контекста
         try:
-            response = await openai_chat_with_history(DEFAULT_SYSTEM_PROMPT, dialog_history, user_model)
+            if pa_enabled:
+                # Получаем персональный контекст для пользователя
+                user_context = await personal_assistant.get_user_context(user_id, message.text)
+                
+                # Используем персональный контекст
+                response = await openai_chat_with_personal_context(
+                    DEFAULT_SYSTEM_PROMPT, 
+                    dialog_history, 
+                    user_context,
+                    user_model
+                )
+                
+                # Обучаем персонального ассистента на основе диалога
+                await personal_assistant.learn_from_dialogue(user_id, message.text, response)
+            else:
+                # Обычный режим без персонального контекста
+                response = await openai_chat_with_history(DEFAULT_SYSTEM_PROMPT, dialog_history, user_model)
         except Exception as e:
             logger.error(f"Ошибка OpenAI API: {e}")
             # Fallback на простой ответ
@@ -1387,6 +1635,149 @@ async def process_text_message(message) -> None:
     except Exception as e:
         logger.error(f"Ошибка обработки сообщения: {e}")
         await message.answer("❌ Извините, произошла ошибка при обработке вашего сообщения.")
+
+
+# 🧠 Функции для персонального ассистента
+
+async def show_personal_assistant_menu(message: types.Message, user_id: int) -> None:
+    """Показывает меню персонального ассистента."""
+    try:
+        # Получаем статистику памяти
+        stats = await personal_assistant.get_user_stats(user_id)
+        total_memories = stats.get("total_memories", 0)
+        
+        # Проверяем, включен ли персональный режим
+        pa_enabled = await get_personal_assistant_mode(user_id)
+        pa_status = "🟢 Включён" if pa_enabled else "🔴 Выключен"
+        
+        pa_menu = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=f"📊 Статистика ({total_memories})", callback_data="pa_view_stats")],
+            [InlineKeyboardButton(text="🧠 Добавить память", callback_data="pa_add_memory")],
+            [InlineKeyboardButton(text=f"🎛️ Персональный режим: {pa_status}", callback_data="pa_toggle_mode")],
+            [InlineKeyboardButton(text="🗑️ Очистить память", callback_data="pa_clear_memory")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_main")]
+        ])
+        
+        await message.answer(
+            f"🧠 <b>Персональный ассистент</b>\n\n"
+            f"💫 Использует векторную память для персонализации ответов\n\n"
+            f"📋 <b>Статус:</b> {pa_status}\n"
+            f"📦 <b>Запомнено:</b> {total_memories} записей\n\n"
+            f"💡 Когда персональный режим включён, я буду учитывать ваши предпочтения и опыт при ответах.",
+            reply_markup=pa_menu,
+            parse_mode="HTML"
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка при отображении меню персонального ассистента: {e}")
+        await message.answer("❌ Ошибка при загрузке меню персонального ассистента.")
+
+
+async def show_personal_memory_stats(message: types.Message, user_id: int) -> None:
+    """Показывает статистику памяти пользователя."""
+    try:
+        stats = await personal_assistant.get_user_stats(user_id)
+        total_memories = stats.get("total_memories", 0)
+        by_type = stats.get("by_type", {})
+        
+        stats_text = f"📊 <b>Статистика памяти</b>\n\n"
+        stats_text += f"📦 <b>Всего записей:</b> {total_memories}\n\n"
+        
+        if by_type:
+            stats_text += "📊 <b>По типам:</b>\n"
+            for memory_type, count in by_type.items():
+                type_names = {
+                    "dialogue": "💬 Диалоги",
+                    "preference": "❤️ Предпочтения",
+                    "fact": "📝 Факты",
+                    "custom": "🏷️ Пользовательские"
+                }
+                type_name = type_names.get(memory_type, memory_type.title())
+                stats_text += f"• {type_name}: {count}\n"
+        else:
+            stats_text += "😊 Пока нет сохранённых воспоминаний."
+        
+        stats_text += "\n\n💡 Добавляйте новые воспоминания, чтобы я лучше вас понимал!"
+        
+        back_menu = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Назад к меню", callback_data="back_to_pa")]
+        ])
+        
+        await message.answer(stats_text, reply_markup=back_menu, parse_mode="HTML")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при получении статистики памяти: {e}")
+        await message.answer("❌ Ошибка при получении статистики.")
+
+
+async def get_personal_assistant_mode(user_id: int) -> bool:
+    """Получает статус персонального режима для пользователя."""
+    global pool
+    
+    if not pool:
+        return False
+    
+    try:
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT personal_assistant_enabled FROM user_settings WHERE user_id = $1",
+                user_id
+            )
+            if row:
+                return row["personal_assistant_enabled"] or False
+            return False
+    except Exception as e:
+        logger.error(f"Ошибка при получении статуса персонального ассистента: {e}")
+        return False
+
+
+async def set_personal_assistant_mode(user_id: int, enabled: bool) -> None:
+    """Устанавливает режим персонального ассистента."""
+    global pool
+    
+    if not pool:
+        return
+    
+    try:
+        async with pool.acquire() as conn:
+            # Проверяем, есть ли уже настройки пользователя
+            existing = await conn.fetchrow(
+                "SELECT user_id FROM user_settings WHERE user_id = $1",
+                user_id
+            )
+            
+            if existing:
+                # Обновляем существующие настройки
+                await conn.execute(
+                    "UPDATE user_settings SET personal_assistant_enabled = $1, updated_at = now() WHERE user_id = $2",
+                    enabled, user_id
+                )
+            else:
+                # Создаём новые настройки
+                await conn.execute(
+                    "INSERT INTO user_settings (user_id, personal_assistant_enabled, preferred_model, tts_enabled, tts_voice) VALUES ($1, $2, $3, $4, $5)",
+                    user_id, enabled, "gpt-4o", False, "alloy"
+                )
+    except Exception as e:
+        logger.error(f"Ошибка при сохранении режима персонального ассистента: {e}")
+
+
+async def toggle_personal_assistant_mode(message: types.Message, user_id: int) -> None:
+    """Переключает режим персонального ассистента."""
+    try:
+        current_mode = await get_personal_assistant_mode(user_id)
+        new_mode = not current_mode
+        await set_personal_assistant_mode(user_id, new_mode)
+        
+        status = "🟢 включён" if new_mode else "🔴 выключен"
+        await message.answer(f"🎛️ Персональный режим {status}!")
+        
+        # Обновляем меню
+        await show_personal_assistant_menu(message, user_id)
+        
+    except Exception as e:
+        logger.error(f"Ошибка при переключении режима персонального ассистента: {e}")
+        await message.answer("❌ Ошибка при переключении режима.")
 
 
 async def main() -> None:
