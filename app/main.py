@@ -9,6 +9,7 @@ PostgreSQL. Он подключается к OpenAI через модуль ai �
 
 import asyncio
 import logging
+import os
 from datetime import datetime
 
 from aiogram import Bot, Dispatcher, types
@@ -38,6 +39,9 @@ dp = Dispatcher()
 # Пул подключений к базе данных (инициализируется при запуске)
 pool: asyncpg.pool.Pool | None = None
 
+# Кеш для хранения распознанных голосовых сообщений
+voice_messages_cache = {}
+
 # Улучшенный системный промпт по умолчанию для диалогов
 DEFAULT_SYSTEM_PROMPT = (
     "Ты — интеллектуальный Telegram-бот. Твои задачи:\n"
@@ -65,14 +69,12 @@ WELCOME_TEXT = """
 Или просто напишите любой вопрос и получите умные ответы от современного AI!
 """
 
-# Создание главного меню с кнопками для всех команд
+# Создание главного меню с кнопками для всех команд (упрощённое)
 main_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="📊 Статистика", callback_data="stats"),
-     InlineKeyboardButton(text="🎨 Создать арт", callback_data="art")],
-    [InlineKeyboardButton(text="💡 Умный промпт", callback_data="suggest_prompt"),
-     InlineKeyboardButton(text="🔄 Сброс контекста", callback_data="reset_context")],
-    [InlineKeyboardButton(text="🤖 Модель ИИ", callback_data="select_model"),
-     InlineKeyboardButton(text="🔊 Голосовые ответы", callback_data="tts_settings")],
+     InlineKeyboardButton(text="💡 Умный промпт", callback_data="suggest_prompt")],
+    [InlineKeyboardButton(text="🔄 Сброс контекста", callback_data="reset_context"),
+     InlineKeyboardButton(text="🤖 Модель ИИ", callback_data="select_model")],
     [InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help"),
      InlineKeyboardButton(text="💬 Начать чат", callback_data="chat")],
 ])
@@ -80,11 +82,9 @@ main_menu = InlineKeyboardMarkup(inline_keyboard=[
 # Создание расширенного меню с админ-панелью для администраторов
 admin_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="📊 Статистика", callback_data="stats"),
-     InlineKeyboardButton(text="🎨 Создать арт", callback_data="art")],
-    [InlineKeyboardButton(text="💡 Умный промпт", callback_data="suggest_prompt"),
-     InlineKeyboardButton(text="🔄 Сброс контекста", callback_data="reset_context")],
-    [InlineKeyboardButton(text="🤖 Модель ИИ", callback_data="select_model"),
-     InlineKeyboardButton(text="🔊 Голосовые ответы", callback_data="tts_settings")],
+     InlineKeyboardButton(text="💡 Умный промпт", callback_data="suggest_prompt")],
+    [InlineKeyboardButton(text="🔄 Сброс контекста", callback_data="reset_context"),
+     InlineKeyboardButton(text="🤖 Модель ИИ", callback_data="select_model")],
     [InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help"),
      InlineKeyboardButton(text="💬 Начать чат", callback_data="chat")],
     [InlineKeyboardButton(text="👑 Админ-панель", callback_data="admin_panel")],
@@ -333,11 +333,22 @@ async def process_callback(callback_query: types.CallbackQuery) -> None:
         # Вызываем обработчик команды /help
         await cmd_help(callback_query.message)
     elif callback_query.data == "admin_panel":
-        # Проверяем, является ли пользователь администратором
-        if is_admin(callback_query.from_user.id):
+        # Проверяем, является ли пользователь администратором с расширенным логированием
+        user_id = callback_query.from_user.id
+        admins_raw = os.getenv("ADMINS", "")
+        logger.info(f"👑 ДИАГНОСТИКА АДМИН ДОСТУПА:")
+        logger.info(f"   user_id={user_id} (тип: {type(user_id)})")
+        logger.info(f"   ADMINS env={repr(admins_raw)}")
+        logger.info(f"   ADMINS parsed={settings.ADMINS}")
+        logger.info(f"   ADMINS types={[type(x) for x in settings.ADMINS]}")
+        
+        if is_admin(user_id):
+            logger.info(f"✅ Админский доступ РАЗРЕШЁН для user_id={user_id}")
             await callback_query.message.answer("👑 <b>Админ-панель</b>", reply_markup=admin_commands_menu)
         else:
-            await callback_query.message.answer("⛔ У вас нет доступа к админ-панели.")
+            logger.warning(f"❌ Админский доступ ЗАПРЕЩЁН для user_id={user_id}")
+            logger.warning(f"💡 Чтобы получить доступ, добавьте {user_id} в переменную ADMINS")
+            await callback_query.message.answer(f"⛔ У вас нет доступа к админ-панели.\n\n📝 Ваш ID: {user_id}\n\n💡 Для получения доступа обратитесь к администратору.")
     elif callback_query.data == "select_model":
         await callback_query.message.answer("🤖 <b>Выберите модель ИИ</b>", reply_markup=model_selection_menu)
     elif callback_query.data == "tts_settings":
@@ -397,6 +408,35 @@ async def process_callback(callback_query: types.CallbackQuery) -> None:
             await callback_query.message.answer("🏠 <b>Главное меню</b>", reply_markup=admin_menu)
         else:
             await callback_query.message.answer("🏠 <b>Главное меню</b>", reply_markup=main_menu)
+    elif callback_query.data.startswith("voice_response_"):
+        # Отвечаем голосом на распознанное сообщение
+        await callback_query.message.answer("🔊 Готовлю голосовой ответ...")
+        
+        # Извлекаем ключ из callback_data
+        key = callback_query.data.replace("voice_response_", "")
+        recognized_text = voice_messages_cache.get(key)
+        
+        if recognized_text:
+            await process_voice_text_message(callback_query, recognized_text, voice_response=True)
+            # Очищаем кеш
+            voice_messages_cache.pop(key, None)
+        else:
+            await callback_query.message.answer("❌ Не удалось найти распознанный текст. Попробуйте отправить голосовое сообщение снова.")
+            
+    elif callback_query.data.startswith("text_response_"):
+        # Обычный текстовый ответ
+        await callback_query.message.answer("📝 Обрабатываю ваш запрос...")
+        
+        # Извлекаем ключ из callback_data
+        key = callback_query.data.replace("text_response_", "")
+        recognized_text = voice_messages_cache.get(key)
+        
+        if recognized_text:
+            await process_voice_text_message(callback_query, recognized_text, voice_response=False)
+            # Очищаем кеш
+            voice_messages_cache.pop(key, None)
+        else:
+            await callback_query.message.answer("❌ Не удалось найти распознанный текст. Попробуйте отправить голосовое сообщение снова.")
     elif callback_query.data.startswith("set_model_"):
         # Устанавливаем модель ИИ
         model = callback_query.data.replace("set_model_", "")
@@ -551,31 +591,19 @@ async def handle_voice_message(message: types.Message) -> None:
         # Удаляем временный файл
         os.unlink(temp_filename)
         
-        # Отправляем пользователю распознанный текст для подтверждения
-        await message.answer(f"🎤 Распознанный текст:\n\n{recognized_text}\n\nОбрабатываю ваш запрос...")
+        # Отправляем пользователю распознанный текст и вопрос о типе ответа
+        voice_menu = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔊 Ответить голосом", callback_data=f"voice_response_{message.from_user.id}_{hash(recognized_text)%10000}")],
+            [InlineKeyboardButton(text="📝 Обычный ответ", callback_data=f"text_response_{message.from_user.id}_{hash(recognized_text)%10000}")]
+        ])
         
-        # Обрабатываем распознанный текст как обычное сообщение
-        # Создаем фиктивное сообщение с распознанным текстом
-        from dataclasses import dataclass
-        from typing import Optional
+        # Сохраняем распознанный текст в глобальном словаре для обработки callback'ов
+        voice_messages_cache[f"{message.from_user.id}_{hash(recognized_text)%10000}"] = recognized_text
         
-        @dataclass
-        class FakeMessage:
-            text: str
-            from_user: object
-            chat: object
-            message_id: int
-            
-            def __init__(self, original_message, text):
-                self.text = text
-                self.from_user = original_message.from_user
-                self.chat = original_message.chat
-                self.message_id = original_message.message_id
-        
-        fake_message = FakeMessage(message, recognized_text)
-        
-        # Обрабатываем как обычное текстовое сообщение
-        await process_text_message(fake_message)
+        await message.answer(
+            f"🎤 Распознанный текст:\n\n{recognized_text}\n\n🤔 Как ответить?",
+            reply_markup=voice_menu
+        )
         
     except Exception as e:
         logger.error(f"Ошибка при обработке голосового сообщения: {e}")
@@ -685,11 +713,6 @@ async def toggle_tts(message: types.Message) -> None:
                 # Создаем новые настройки с всеми полями по умолчанию
                 await conn.execute(
                     "INSERT INTO user_settings (user_id, tts_enabled, preferred_model, tts_voice, created_at, updated_at) VALUES ($1, $2, $3, $4, now(), now())",
-                    message.from_user.id, new_tts, "gpt-4o", "alloy"
-                )
-                # Создаем новые настройки с всеми полями по умолчанию
-                await conn.execute(
-                    "INSERT INTO user_settings (user_id, tts_enabled, preferred_model, tts_voice) VALUES ($1, $2, $3, $4)",
                     message.from_user.id, new_tts, "gpt-4o", "alloy"
                 )
         
@@ -810,6 +833,157 @@ async def handle_image_message(message: types.Message) -> None:
     except Exception as e:
         logger.error(f"Ошибка при анализе изображения: {e}")
         await message.answer("❌ Извините, произошла ошибка при анализе изображения.")
+
+
+async def process_voice_text_message(callback_query: types.CallbackQuery, text: str, voice_response: bool = False) -> None:
+    """Обрабатывает распознанный текст из голосового сообщения."""
+    global pool
+    
+    # Проверяем, активен ли бот
+    if not await is_bot_active(pool):
+        await callback_query.message.answer("⛔ Бот временно отключён администратором.")
+        return
+    
+    text_lower = text.lower()
+    
+    # Обрабатываем автоматическую генерацию изображений
+    image_keywords = ["картинку", "изображение", "нарисуй", "арт", "картина", "рисунок", "фото", "изобрази"]
+    if any(word in text_lower for word in image_keywords):
+        try:
+            image_url = await openai_image(text)
+            await callback_query.message.answer_photo(image_url, caption=f"✨ Вот что получилось!")
+            
+            # Записываем в базу
+            if pool:
+                try:
+                    async with pool.acquire() as conn:
+                        await conn.execute(
+                            "INSERT INTO logs (username, command, args, answer) VALUES ($1, $2, $3, $4)",
+                            callback_query.from_user.username,
+                            "voice_art",
+                            text,
+                            f"Сгенерировано изображение из голосового: {image_url}",
+                        )
+                except Exception as e:
+                    logger.error(f"Ошибка при записи в базу данных: {e}")
+            return
+        except Exception as e:
+            logger.error(f"Ошибка при генерации изображения: {e}")
+            await callback_query.message.answer("❌ Извините, произошла ошибка при генерации изображения.")
+            return
+    
+    try:
+        # Получаем модель пользователя
+        user_model = None
+        if pool:
+            try:
+                async with pool.acquire() as conn:
+                    row = await conn.fetchrow(
+                        "SELECT preferred_model FROM user_settings WHERE user_id = $1",
+                        callback_query.from_user.id
+                    )
+                    if row:
+                        user_model = row["preferred_model"]
+            except Exception as e:
+                logger.error(f"Ошибка при получении настроек пользователя: {e}")
+        
+        # Получаем историю диалога
+        dialog_history = []
+        if pool:
+            try:
+                async with pool.acquire() as conn:
+                    rows = await conn.fetch(
+                        "SELECT role, content FROM dialog_history WHERE user_id = $1 ORDER BY id DESC LIMIT 10",
+                        callback_query.from_user.id
+                    )
+                    dialog_history = [{"role": row["role"], "content": row["content"]} for row in reversed(rows)]
+            except Exception as e:
+                logger.error(f"Ошибка при получении истории диалога: {e}")
+        
+        # Добавляем текущее сообщение
+        dialog_history.append({"role": "user", "content": text})
+        
+        # Получаем ответ от OpenAI
+        try:
+            response = await openai_chat_with_history(DEFAULT_SYSTEM_PROMPT, dialog_history, user_model)
+        except Exception as e:
+            logger.error(f"Ошибка OpenAI API: {e}")
+            response = "❌ Извините, сейчас проблемы с AI сервисом. Попробуйте позже."
+        
+        # Ограничиваем длину
+        if len(response) > settings.MAX_TG_REPLY:
+            response = response[:settings.MAX_TG_REPLY] + "... (ответ усечён)"
+        
+        # Отправляем ответ (голосовой или текстовый)
+        if voice_response and len(response) < 4000:  # Ограничение для TTS
+            try:
+                # Получаем настройки голоса
+                tts_voice = "alloy"
+                if pool:
+                    try:
+                        async with pool.acquire() as conn:
+                            row = await conn.fetchrow(
+                                "SELECT tts_voice FROM user_settings WHERE user_id = $1",
+                                callback_query.from_user.id
+                            )
+                            if row:
+                                tts_voice = row["tts_voice"]
+                    except Exception as e:
+                        logger.error(f"Ошибка при получении настроек TTS: {e}")
+                
+                # Генерируем голосовое сообщение
+                audio_content = await openai_tts(response, tts_voice)
+                
+                # Создаем временный файл
+                import tempfile
+                import os
+                
+                with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp_file:
+                    temp_filename = temp_file.name
+                    temp_file.write(audio_content)
+                
+                # Отправляем голосовое сообщение
+                from aiogram.types import FSInputFile
+                audio = FSInputFile(temp_filename, filename="response.mp3")
+                caption = response[:1000] + "..." if len(response) > 1000 else response
+                await callback_query.message.answer_voice(audio, caption=caption)
+                
+                # Удаляем временный файл
+                os.unlink(temp_filename)
+            except Exception as e:
+                logger.error(f"Ошибка при генерации голосового ответа: {e}")
+                # Отправляем текстовый ответ в случае ошибки
+                await callback_query.message.answer(response)
+        else:
+            # Отправляем текстовый ответ
+            await callback_query.message.answer(response)
+        
+        # Записываем в базу
+        if pool:
+            try:
+                async with pool.acquire() as conn:
+                    await conn.execute(
+                        "INSERT INTO logs (username, command, args, answer) VALUES ($1, $2, $3, $4)",
+                        callback_query.from_user.username,
+                        "voice_message",
+                        text,
+                        response,
+                    )
+                    # Сохраняем в истории диалога
+                    await conn.execute(
+                        "INSERT INTO dialog_history (user_id, role, content) VALUES ($1, $2, $3)",
+                        callback_query.from_user.id, "user", text
+                    )
+                    await conn.execute(
+                        "INSERT INTO dialog_history (user_id, role, content) VALUES ($1, $2, $3)",
+                        callback_query.from_user.id, "assistant", response
+                    )
+            except Exception as e:
+                logger.error(f"Ошибка при записи в базу данных: {e}")
+                
+    except Exception as e:
+        logger.error(f"Ошибка обработки голосового сообщения: {e}")
+        await callback_query.message.answer("❌ Извините, произошла ошибка при обработке вашего сообщения.")
 
 
 async def process_text_message(message) -> None:
