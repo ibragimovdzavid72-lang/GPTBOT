@@ -147,12 +147,45 @@ async def openai_stt(audio_path: str) -> str:
     :return: Распознанный текст.
     :raises Exception: При ошибке взаимодействия с API.
     """
+    import tempfile
+    import os
+    
+    converted_path = None
     try:
-        with open(audio_path, "rb") as audio_file:
+        # Проверяем формат файла и конвертируем при необходимости
+        if audio_path.endswith('.ogg'):
+            try:
+                from pydub import AudioSegment
+                # Конвертируем OGG в WAV для лучшей совместимости
+                audio = AudioSegment.from_ogg(audio_path)
+                
+                # Создаем временный WAV файл
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
+                    converted_path = temp_file.name
+                    
+                audio.export(converted_path, format="wav")
+                file_to_use = converted_path
+            except ImportError:
+                # Если pydub не установлен, используем оригинальный файл
+                file_to_use = audio_path
+        else:
+            file_to_use = audio_path
+            
+        # Отправляем на распознавание в OpenAI Whisper
+        with open(file_to_use, "rb") as audio_file:
             response = await client.audio.transcriptions.create(
                 model="whisper-1",
-                file=audio_file
+                file=audio_file,
+                response_format="text"
             )
-        return response.text
+        return response.strip() if hasattr(response, 'strip') else str(response).strip()
+        
     except Exception as e:
         raise Exception(f"Ошибка при распознавании речи: {str(e)}")
+    finally:
+        # Удаляем временный файл если он был создан
+        if converted_path and os.path.exists(converted_path):
+            try:
+                os.unlink(converted_path)
+            except Exception:
+                pass  # Игнорируем ошибки удаления
