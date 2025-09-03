@@ -22,6 +22,7 @@ from .config import settings
 from .suggest import generate_prompt_from_logs
 from .ai import openai_chat, openai_image, openai_vision, openai_tts, openai_stt, openai_chat_with_history
 from .admin import is_admin, cmd_admin_stats, cmd_errors, cmd_bot_on, cmd_bot_off, is_bot_active
+from .webhook import WebhookManager
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -61,7 +62,7 @@ WELCOME_TEXT = """
 • 💎 Персонализация
 
 🚀 Используйте кнопки ниже для быстрого доступа к всем функциям!
-Или просто напишите любой вопрос и испытайте мощь современного AI!
+Или просто напишите любой вопрос и получите умные ответы от современного AI!
 """
 
 # Создание главного меню с кнопками для всех команд
@@ -590,14 +591,14 @@ async def set_user_model(message: types.Message, model: str) -> None:
             if existing:
                 # Обновляем существующие настройки
                 await conn.execute(
-                    "UPDATE user_settings SET preferred_model = $1 WHERE user_id = $2",
+                    "UPDATE user_settings SET preferred_model = $1, updated_at = now() WHERE user_id = $2",
                     model, message.from_user.id
                 )
             else:
-                # Создаем новые настройки
+                # Создаем новые настройки с всеми полями по умолчанию
                 await conn.execute(
-                    "INSERT INTO user_settings (user_id, preferred_model) VALUES ($1, $2)",
-                    message.from_user.id, model
+                    "INSERT INTO user_settings (user_id, preferred_model, tts_enabled, tts_voice) VALUES ($1, $2, $3, $4)",
+                    message.from_user.id, model, False, "alloy"
                 )
         
         logger.info(f"Пользователь {message.from_user.id} изменил модель на {model}")
@@ -667,14 +668,19 @@ async def toggle_tts(message: types.Message) -> None:
             if existing:
                 # Обновляем существующие настройки
                 await conn.execute(
-                    "UPDATE user_settings SET tts_enabled = $1 WHERE user_id = $2",
+                    "UPDATE user_settings SET tts_enabled = $1, updated_at = now() WHERE user_id = $2",
                     new_tts, message.from_user.id
                 )
             else:
-                # Создаем новые настройки
+                # Создаем новые настройки с всеми полями по умолчанию
                 await conn.execute(
-                    "INSERT INTO user_settings (user_id, tts_enabled) VALUES ($1, $2)",
-                    message.from_user.id, new_tts
+                    "INSERT INTO user_settings (user_id, tts_enabled, preferred_model, tts_voice, created_at, updated_at) VALUES ($1, $2, $3, $4, now(), now())",
+                    message.from_user.id, new_tts, "gpt-4o", "alloy"
+                )
+                # Создаем новые настройки с всеми полями по умолчанию
+                await conn.execute(
+                    "INSERT INTO user_settings (user_id, tts_enabled, preferred_model, tts_voice) VALUES ($1, $2, $3, $4)",
+                    message.from_user.id, new_tts, "gpt-4o", "alloy"
                 )
         
         status = "включены" if new_tts else "выключены"
@@ -703,14 +709,14 @@ async def set_tts_voice(message: types.Message, voice: str) -> None:
             if existing:
                 # Обновляем существующие настройки
                 await conn.execute(
-                    "UPDATE user_settings SET tts_voice = $1 WHERE user_id = $2",
+                    "UPDATE user_settings SET tts_voice = $1, updated_at = now() WHERE user_id = $2",
                     voice, message.from_user.id
                 )
             else:
-                # Создаем новые настройки
+                # Создаем новые настройки с всеми полями по умолчанию
                 await conn.execute(
-                    "INSERT INTO user_settings (user_id, tts_voice) VALUES ($1, $2)",
-                    message.from_user.id, voice
+                    "INSERT INTO user_settings (user_id, tts_voice, preferred_model, tts_enabled, created_at, updated_at) VALUES ($1, $2, $3, $4, now(), now())",
+                    message.from_user.id, voice, "gpt-4o", False
                 )
         
         logger.info(f"Пользователь {message.from_user.id} изменил голос TTS на {voice}")
@@ -963,21 +969,56 @@ async def process_text_message(message) -> None:
 
 async def main() -> None:
     """Главная функция для запуска бота."""
+    import os
+    
     logger.info("Запуск Telegram-бота...")
     
     # Настройка хендлеров запуска и остановки
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
     
-    try:
-        # Запуск бота
-        await dp.start_polling(bot)
-    except KeyboardInterrupt:
-        logger.info("Бот остановлен пользователем")
-    except Exception as e:
-        logger.error(f"Критическая ошибка при запуске бота: {e}")
-    finally:
-        logger.info("Завершение работы бота...")
+    # Проверяем режим работы: webhook или polling
+    webhook_url = os.getenv("WEBHOOK_URL")
+    use_webhook = webhook_url is not None
+    
+    if use_webhook:
+        logger.info(f"🌐 Используется WEBHOOK режим: {webhook_url}")
+        try:
+            # Создаем webhook менеджер
+            webhook_manager = WebhookManager(bot, dp)
+            
+            # Запускаем webhook сервер
+            runner = await webhook_manager.run_webhook_server()
+            
+            logger.info("✅ Webhook сервер запущен успешно!")
+            
+            # Ожидаем завершения
+            try:
+                while True:
+                    await asyncio.sleep(3600)  # Просыпаемся 1 час
+            except KeyboardInterrupt:
+                logger.info("👋 Бот остановлен пользователем")
+            finally:
+                # Останавливаем сервер
+                await runner.cleanup()
+                await webhook_manager.remove_webhook()
+                
+        except Exception as e:
+            logger.error(f"💥 Ошибка в webhook режиме: {e}")
+            logger.info("🔄 Переходим на polling режим...")
+            use_webhook = False
+    
+    if not use_webhook:
+        logger.info("🔄 Используется POLLING режим")
+        try:
+            # Запуск бота в polling режиме
+            await dp.start_polling(bot, skip_updates=True)
+        except KeyboardInterrupt:
+            logger.info("👋 Бот остановлен пользователем")
+        except Exception as e:
+            logger.error(f"💥 Критическая ошибка при запуске бота: {e}")
+        finally:
+            logger.info("🏁 Завершение работы бота...")
 
 
 if __name__ == "__main__":
