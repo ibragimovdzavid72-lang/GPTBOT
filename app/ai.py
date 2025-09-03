@@ -62,19 +62,23 @@ async def openai_chat_with_history(system_prompt: str, messages: list, model: st
         raise Exception(f"Ошибка при вызове OpenAI API: {str(e)}")
 
 
-async def openai_image(prompt: str) -> str:
+async def openai_image(prompt: str, size: str = "1024x1024") -> str:
     """
     Генерирует изображение с помощью модели DALL-E от OpenAI.
 
     :param prompt: Описание изображения для генерации.
+    :param size: Размер изображения ("512x512", "1024x1024", "1024x1792", "1792x1024").
     :return: URL сгенерированного изображения.
     :raises Exception: При ошибке взаимодействия с API.
     """
     try:
+        # Выбираем модель в зависимости от размера
+        model = "dall-e-3" if size in ["1024x1024", "1024x1792", "1792x1024"] else "dall-e-2"
+        
         response = await client.images.generate(
-            model="dall-e-3",
+            model=model,
             prompt=prompt,
-            size="1024x1024",
+            size=size,
             quality="standard",
             n=1,
         )
