@@ -1792,10 +1792,10 @@ async def main() -> None:
     
     # Проверяем режим работы: webhook или polling
     webhook_url = os.getenv("WEBHOOK_URL")
-    use_webhook = webhook_url is not None
+    use_webhook = webhook_url and webhook_url.strip() and "your-app" not in webhook_url
     
     if use_webhook:
-        logger.info(f"🌐 Используется WEBHOOK режим: {webhook_url}")
+        logger.info(f"🌐 Используется WEBHOOK режим (безопасно для Railway): {webhook_url}")
         try:
             # Создаем webhook менеджер
             webhook_manager = WebhookManager(bot, dp)
@@ -1811,17 +1811,19 @@ async def main() -> None:
                 logger.info(f"📊 Webhook URL: {webhook_info.url}")
                 if webhook_info.last_error_date:
                     logger.warning(f"⚠️ Последняя ошибка: {webhook_info.last_error_message}")
+                else:
+                    logger.info("✅ Webhook работает без ошибок")
             
             # Ожидаем завершения
             try:
                 while True:
-                    await asyncio.sleep(3600)  # Просыпаемся 1 час
+                    await asyncio.sleep(3600)  # Просыпаемся каждый час
             except KeyboardInterrupt:
                 logger.info("👋 Бот остановлен пользователем")
             finally:
                 # Останавливаем сервер
                 await runner.cleanup()
-                await webhook_manager.remove_webhook()
+                logger.info("📊 Webhook сервер остановлен")
                 
         except Exception as e:
             logger.error(f"💥 Ошибка в webhook режиме: {e}")
@@ -1829,8 +1831,12 @@ async def main() -> None:
             use_webhook = False
     
     if not use_webhook:
-        logger.info("🔄 Используется POLLING режим")
+        logger.info("🔄 Используется POLLING режим (для локальной разработки)")
         try:
+            # Удаляем webhook перед поллингом
+            await bot.delete_webhook(drop_pending_updates=True)
+            logger.info("🗑️ Webhook удален перед polling")
+            
             # Запуск бота в polling режиме
             await dp.start_polling(bot, skip_updates=True)
         except KeyboardInterrupt:
