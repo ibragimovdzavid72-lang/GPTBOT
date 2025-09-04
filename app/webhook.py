@@ -66,19 +66,41 @@ class WebhookManager:
         
         # Создаем ручной обработчик webhook для гарантии работы
         async def handle_webhook(request):
-            """Ручной обработчик webhook запросов."""
+            """Ручной обработчик webhook запросов с усиленной безопасностью."""
             try:
-                logger.info(f"🌐 Получен webhook POST запрос на {request.path}")
+                logger.info(f"🌐 Получен webhook POST запрос на {request.path} от {request.remote}")
                 
-                # Проверяем secret token если указан
+                # Проверяем method
+                if request.method != 'POST':
+                    logger.warning(f"⚠️ Неправильный HTTP method: {request.method}")
+                    return web.Response(status=405)  # Method Not Allowed
+                
+                # Проверяем Content-Type
+                content_type = request.headers.get("Content-Type", "")
+                if "application/json" not in content_type:
+                    logger.warning(f"⚠️ Неправильный Content-Type: {content_type}")
+                    return web.Response(status=400)
+                
+                # Проверяем secret token для безопасности
                 if webhook_secret and webhook_secret != "telegram_webhook_secret":
                     secret_header = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
                     if secret_header != webhook_secret:
-                        logger.warning(f"⚠️ Неверный secret token: {secret_header}")
-                        return web.Response(status=401)
+                        logger.warning(f"⚠️ Неверный secret token: expected '{webhook_secret}', got '{secret_header}'")
+                        logger.warning(f"🕵️ Подозрительный запрос от {request.remote}")
+                        return web.Response(status=401)  # Unauthorized
                 
                 # Получаем данные обновления
-                data = await request.json()
+                try:
+                    data = await request.json()
+                except Exception as e:
+                    logger.error(f"❌ Ошибка парсинга JSON: {e}")
+                    return web.Response(status=400)
+                
+                # Проверяем структуру данных
+                if not isinstance(data, dict) or 'update_id' not in data:
+                    logger.warning(f"⚠️ Неправильная структура данных: {data}")
+                    return web.Response(status=400)
+                
                 logger.info(f"📄 Полученные данные: update_id={data.get('update_id', '?')}")
                 
                 from aiogram import types
@@ -89,6 +111,7 @@ class WebhookManager:
                 logger.info("✅ Обновление успешно обработано")
                 
                 return web.Response(status=200)
+                
             except Exception as e:
                 logger.error(f"❌ Ошибка обработки webhook: {e}")
                 import traceback
