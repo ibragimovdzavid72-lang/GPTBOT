@@ -25,6 +25,7 @@ from .ai import openai_chat, openai_image, openai_vision, openai_tts, openai_stt
 from .admin import is_admin, is_super_admin, cmd_admin_stats, cmd_errors, cmd_bot_on, cmd_bot_off, is_bot_active
 from .webhook import WebhookManager
 from .vector_memory import personal_assistant
+from .tavily_search import search_web, search_news
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -106,7 +107,12 @@ LOCALIZATION = {
         "pro_features": "– Всё из FREE +\n– Работа с файлами и документами\n– Генерация изображений\n– Копирайтинг, рерайтинг, SEO\n– OCR (распознавание текста с картинок)",
         "ultra_features": "– Всё из PRO +\n– Подключение к API (ChatGPT, MidJourney)\n– Визуальный контент без ограничений\n– Командная работа\n– Приоритетная скорость",
         "functionality_title": "📌 Функционал AI Agent:",
-        "target_users": "👥 Целевые пользователи:\n\n📚 Студенты (написание дипломов/эссе/курсовых/сочинений/рефератов)\n\n✍️ Копирайтеры (написание на 100% уникальных текстов, рерайт, обход ИИ-детекта, обход \"Антиплагиат\")\n\n📱 Блогеры (создание контент-планов, триггерных заголовков, сторителлинга, сценариев для блога и Reels)\n\n🔍 SEO-специалисты (написание больших статей, парсинг поисковых систем, анализ по ключевым словам)\n\n📸 Распознавание текста с картинки (фотографии) и многое другое! 🚀"
+        "target_users": "👥 Целевые пользователи:\n\n📚 Студенты (написание дипломов/эссе/курсовых/сочинений/рефератов)\n\n✍️ Копирайтеры (написание на 100% уникальных текстов, рерайт, обход ИИ-детекта, обход \"Антиплагиат\")\n\n📱 Блогеры (создание контент-планов, триггерных заголовков, сторителлинга, сценариев для блога и Reels)\n\n🔍 SEO-специалисты (написание больших статей, парсинг поисковых систем, анализ по ключевым словам)\n\n📸 Распознавание текста с картинки (фотографии) и многое другое! 🚀",
+        "web_search": "🔍 Поиск в интернете",
+        "search_news": "📰 Поиск новостей",
+        "search_results": "🔍 Результаты поиска",
+        "search_placeholder": "Введите запрос для поиска...",
+        "search_help": "Используйте /search [запрос] для поиска в интернете\n/news [запрос] для поиска новостей"
     },
     "en": {
         "welcome": """🌟 ═══════════════════════════ 🌟
@@ -149,7 +155,12 @@ LOCALIZATION = {
         "pro_features": "– Everything from FREE +\n– File and document processing\n– Image generation\n– Copywriting, rewriting, SEO\n– OCR (text recognition from images)",
         "ultra_features": "– Everything from PRO +\n– API connections (ChatGPT, MidJourney)\n– Unlimited visual content\n– Team collaboration\n– Priority speed",
         "functionality_title": "📌 AI Agent Functionality:",
-        "target_users": "👥 Target Users:\n\n📚 Students (writing theses/essays/coursework/compositions/reports)\n\n✍️ Copywriters (writing 100% unique texts, rewriting, bypassing AI detection, bypassing \"Anti-plagiarism\")\n\n📱 Bloggers (creating content plans, trigger headlines, storytelling, scripts for blogs and Reels)\n\n🔍 SEO specialists (writing large articles, search engine parsing, keyword analysis)\n\n📸 Text recognition from images (photos) and much more! 🚀"
+        "target_users": "👥 Target Users:\n\n📚 Students (writing theses/essays/coursework/compositions/reports)\n\n✍️ Copywriters (writing 100% unique texts, rewriting, bypassing AI detection, bypassing \"Anti-plagiarism\")\n\n📱 Bloggers (creating content plans, trigger headlines, storytelling, scripts for blogs and Reels)\n\n🔍 SEO specialists (writing large articles, search engine parsing, keyword analysis)\n\n📸 Text recognition from images (photos) and much more! 🚀",
+        "web_search": "🔍 Web Search",
+        "search_news": "📰 News Search", 
+        "search_results": "🔍 Search Results",
+        "search_placeholder": "Enter search query...",
+        "search_help": "Use /search [query] to search the web\n/news [query] to search for news"
     }
 }
 
@@ -217,6 +228,8 @@ admin_menu = InlineKeyboardMarkup(inline_keyboard=[
 ai_chat_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="💬 Начать чат", callback_data="start_chat"),
      InlineKeyboardButton(text="🤖 Выбрать модель", callback_data="select_model")],
+    [InlineKeyboardButton(text="🔍 Поиск в сети", callback_data="web_search_menu"),
+     InlineKeyboardButton(text="📰 Поиск новостей", callback_data="news_search_menu")],
     [InlineKeyboardButton(text="🔄 Сбросить контекст", callback_data="reset_context"),
      InlineKeyboardButton(text="💡 Умный промпт", callback_data="suggest_prompt")],
     [InlineKeyboardButton(text="⬅️ Главное меню", callback_data="back_to_main")],
@@ -672,6 +685,27 @@ async def process_callback(callback_query: types.CallbackQuery) -> None:
                 f"📝 Ваш ID: {user_id}\n\n"
                 f"💡 Админ-панель доступна только основному администратору."
             )
+    elif callback_query.data == "web_search_menu":
+        # Меню поиска в сети
+        await callback_query.message.answer(
+            "🔍 <b>Поиск в сети</b>\n\n"
+            "Используйте /search [запрос] для поиска актуальной информации в интернете.\n\n"
+            "📝 <b>Пример:</b>\n"
+            "/search погода в Москве\n"
+            "/search курс доллара сегодня",
+            parse_mode="HTML"
+        )
+    elif callback_query.data == "news_search_menu":
+        # Меню поиска новостей
+        await callback_query.message.answer(
+            "📰 <b>Поиск новостей</b>\n\n"
+            "Используйте /news [запрос] для поиска последних новостей.\n\n"
+            "📝 <b>Примеры:</b>\n"
+            "/news технологии\n"
+            "/news экономика России\n"
+            "/news (без параметров) - общие новости",
+            parse_mode="HTML"
+        )
     elif callback_query.data == "select_model":
         await callback_query.message.answer("🤖 <b>Выберите модель ИИ</b>", reply_markup=model_selection_menu)
     elif callback_query.data == "personal_assistant":
@@ -1043,6 +1077,90 @@ async def cmd_reset_context(message: types.Message) -> None:
 async def cmd_personal(message: types.Message) -> None:
     """Обработчик команды /personal для быстрого доступа к персональному ассистенту."""
     await show_personal_assistant_menu(message, message.from_user.id)
+
+
+@dp.message(Command("search"))
+async def cmd_search(message: types.Message, command: CommandObject) -> None:
+    """Обработчик команды /search для поиска в интернете."""
+    query = command.args if command.args else None
+    
+    if not query:
+        user_lang = await get_user_language(message.from_user.id)
+        help_text = get_text("search_help", user_lang)
+        await message.answer(f"ℹ️ {help_text}")
+        return
+    
+    # Показываем индикатор печати
+    await bot.send_chat_action(message.chat.id, "typing")
+    processing_msg = await message.answer("🔍 Выполняю поиск в интернете...")
+    
+    try:
+        # Выполняем поиск
+        results = await search_web(query, max_results=5)
+        
+        # Удаляем сообщение о поиске
+        await processing_msg.delete()
+        
+        # Отправляем результаты
+        await message.answer(results, parse_mode="Markdown", disable_web_page_preview=True)
+        
+        # Записываем в базу данных
+        if pool:
+            try:
+                async with pool.acquire() as conn:
+                    await conn.execute(
+                        "INSERT INTO logs (username, command, args, answer) VALUES ($1, $2, $3, $4)",
+                        message.from_user.username,
+                        "search",
+                        query,
+                        f"Поиск выполнен: {query[:100]}..."
+                    )
+            except Exception as e:
+                logger.error(f"Ошибка записи поиска в БД: {e}")
+        
+    except Exception as e:
+        await processing_msg.delete()
+        logger.error(f"Ошибка поиска: {e}")
+        await message.answer("❌ Произошла ошибка при выполнении поиска. Попробуйте позже.")
+
+
+@dp.message(Command("news"))
+async def cmd_news(message: types.Message, command: CommandObject) -> None:
+    """Обработчик команды /news для поиска новостей."""
+    query = command.args if command.args else "последние новости"
+    
+    # Показываем индикатор печати
+    await bot.send_chat_action(message.chat.id, "typing")
+    processing_msg = await message.answer("📰 Ищу последние новости...")
+    
+    try:
+        # Выполняем поиск новостей
+        results = await search_news(query, max_results=3)
+        
+        # Удаляем сообщение о поиске
+        await processing_msg.delete()
+        
+        # Отправляем результаты
+        await message.answer(results, parse_mode="Markdown", disable_web_page_preview=True)
+        
+        # Записываем в базу данных
+        if pool:
+            try:
+                async with pool.acquire() as conn:
+                    await conn.execute(
+                        "INSERT INTO logs (username, command, args, answer) VALUES ($1, $2, $3, $4)",
+                        message.from_user.username,
+                        "news",
+                        query,
+                        f"Поиск новостей: {query[:100]}..."
+                    )
+            except Exception as e:
+                logger.error(f"Ошибка записи новостей в БД: {e}")
+        
+    except Exception as e:
+        await processing_msg.delete()
+        logger.error(f"Ошибка поиска новостей: {e}")
+        await message.answer("❌ Произошла ошибка при поиске новостей. Попробуйте позже.")
 
 
 @dp.message(Command("admin"))
@@ -1481,6 +1599,50 @@ async def process_voice_text_message(callback_query: types.CallbackQuery, text: 
     if not await is_bot_active(pool):
         await callback_query.message.answer("⛔ Бот временно отключён администратором.")
         return
+    
+    text_lower = text.lower()
+    
+    # Обрабатываем автоматический поиск
+    search_keywords = ["поиск", "найди", "найти", "что такое", "кто такой", "как дела", "последние новости", "актуально", "сейчас", "сегодня", "последнее"]
+    if any(keyword in text_lower for keyword in search_keywords) and len(text) > 20:
+        try:
+            # Показываем индикатор поиска
+            await bot.send_chat_action(message.chat.id, "typing")
+            search_msg = await message.answer("🔍 Поиск актуальной информации...")
+            
+            # Выполняем поиск
+            search_results = await search_web(message.text, max_results=3)
+            
+            # Отправляем результаты поиска
+            await search_msg.delete()
+            await message.answer(search_results, parse_mode="Markdown", disable_web_page_preview=True)
+            
+            # Записываем в базу данных
+            if pool:
+                try:
+                    async with pool.acquire() as conn:
+                        await conn.execute(
+                            "INSERT INTO logs (username, command, args, answer) VALUES ($1, $2, $3, $4)",
+                            message.from_user.username,
+                            "auto_search",
+                            message.text,
+                            f"Автоматический поиск: {message.text[:100]}...",
+                        )
+                        # Сохраняем сообщение в истории диалога
+                        await conn.execute(
+                            "INSERT INTO dialog_history (user_id, role, content) VALUES ($1, $2, $3)",
+                            message.from_user.id, "user", message.text
+                        )
+                        await conn.execute(
+                            "INSERT INTO dialog_history (user_id, role, content) VALUES ($1, $2, $3)",
+                            message.from_user.id, "assistant", search_results
+                        )
+                except Exception as e:
+                    logger.error(f"Ошибка при записи авто-поиска в БД: {e}")
+            return
+        except Exception as e:
+            logger.error(f"Ошибка автоматического поиска: {e}")
+            # Продолжаем с обычным ответом AI
     
     text_lower = text.lower()
     
