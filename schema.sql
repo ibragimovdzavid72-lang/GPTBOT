@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS user_settings (
     tts_enabled BOOLEAN NOT NULL DEFAULT FALSE, -- Включены ли голосовые ответы
     tts_voice TEXT NOT NULL DEFAULT 'alloy',  -- Голос для синтеза речи
     personal_assistant_enabled BOOLEAN NOT NULL DEFAULT FALSE, -- Включен ли персональный ассистент
+    language TEXT NOT NULL DEFAULT 'ru',      -- Предпочитаемый язык интерфейса
     created_at TIMESTAMP DEFAULT now(),       -- Время создания записи
     updated_at TIMESTAMP DEFAULT now()        -- Время последнего обновления
 );
