@@ -7,6 +7,14 @@
 
 import os
 
+# Загружаем переменные окружения из .env файла
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    # python-dotenv не установлен, продолжаем без .env
+    pass
+
 
 class Settings:
     """Класс настроек, читающий значения из переменных окружения."""
