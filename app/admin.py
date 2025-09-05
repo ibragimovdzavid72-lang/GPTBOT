@@ -22,6 +22,28 @@ def is_admin(user_id: int) -> bool:
     return user_id in settings.ADMINS
 
 
+def is_super_admin(user_id: int) -> bool:
+    """
+    Проверяет, является ли пользователь супер-администратором с доступом к админ-панели.
+    
+    Обычные админы могут использовать команды через /,
+    но только супер-админ может видеть админ-панель.
+    
+    Супер-админ определяется как ПЕРВЫЙ ID в переменной окружения ADMINS.
+    Например, если ADMINS="1752390166,123456789", то супер-админ = 1752390166
+
+    :param user_id: ID пользователя Telegram
+    :return: True, если пользователь является супер-администратором
+    """
+    if settings.ADMINS:
+        # Супер-админ - это первый ID в списке ADMINS
+        super_admin_id = settings.ADMINS[0]
+        return user_id == super_admin_id
+    else:
+        # Если список ADMINS пуст - отказываем в доступе
+        return False
+
+
 async def is_bot_active(pool: asyncpg.pool.Pool) -> bool:
     """
     Проверяет, активен ли бот.
@@ -63,10 +85,6 @@ async def cmd_admin_stats(message: types.Message, pool: asyncpg.pool.Pool):
     :param message: Сообщение от пользователя
     :param pool: Пул подключений к базе данных
     """
-    if not is_admin(message.from_user.id):
-        await message.answer("⛔ У вас нет доступа.")
-        return
-
     if not pool:
         await message.answer("⛔ Нет подключения к базе данных.")
         return
@@ -97,10 +115,6 @@ async def cmd_errors(message: types.Message, pool: asyncpg.pool.Pool):
     :param message: Сообщение от пользователя
     :param pool: Пул подключений к базе данных
     """
-    if not is_admin(message.from_user.id):
-        await message.answer("⛔ У вас нет доступа.")
-        return
-
     if not pool:
         await message.answer("⛔ Нет подключения к базе данных.")
         return
@@ -129,10 +143,6 @@ async def cmd_bot_on(message: types.Message, pool: asyncpg.pool.Pool):
     :param message: Сообщение от пользователя
     :param pool: Пул подключений к базе данных
     """
-    if not is_admin(message.from_user.id):
-        await message.answer("⛔ У вас нет доступа.")
-        return
-
     if not pool:
         await message.answer("⛔ Нет подключения к базе данных.")
         return
@@ -169,10 +179,6 @@ async def cmd_bot_off(message: types.Message, pool: asyncpg.pool.Pool):
     :param message: Сообщение от пользователя
     :param pool: Пул подключений к базе данных
     """
-    if not is_admin(message.from_user.id):
-        await message.answer("⛔ У вас нет доступа.")
-        return
-
     if not pool:
         await message.answer("⛔ Нет подключения к базе данных.")
         return
