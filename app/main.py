@@ -25,7 +25,112 @@ from .ai import openai_chat, openai_image, openai_vision, openai_tts, openai_stt
 from .admin import is_admin, is_super_admin, cmd_admin_stats, cmd_errors, cmd_bot_on, cmd_bot_off, is_bot_active
 from .webhook import WebhookManager
 from .vector_memory import personal_assistant
-from .tavily_search import search_web, search_news
+
+# Tavily search integration
+try:
+    from tavily import TavilyClient
+    tavily_client = TavilyClient(api_key=settings.TAVILY_API_KEY) if settings.TAVILY_API_KEY else None
+    if tavily_client:
+        logger.info("Tavily client successfully initialized")
+except ImportError:
+    tavily_client = None
+    logger.warning("Tavily client not available. Install tavily-python for search functionality.")
+
+
+# Tavily search functions
+def format_search_results(results: dict) -> str:
+    """Форматирует результаты поиска для отображения пользователю."""
+    if not results:
+        return "❌ Не удалось получить результаты поиска."
+    
+    formatted_text = "🔍 **Результаты поиска:**\n\n"
+    
+    # Добавляем краткий ответ если есть
+    if results.get("answer"):
+        formatted_text += f"💡 **Краткий ответ:**\n{results['answer']}\n\n"
+    
+    # Добавляем результаты поиска
+    search_results = results.get("results", [])
+    if search_results:
+        formatted_text += "📋 **Источники:**\n\n"
+        for i, result in enumerate(search_results[:5], 1):
+            title = result.get("title", "Без названия")
+            url = result.get("url", "")
+            content = result.get("content", "")
+            
+            formatted_text += f"{i}. **{title}**\n"
+            if content:
+                # Ограничиваем длину описания
+                content_preview = content[:200] + "..." if len(content) > 200 else content
+                formatted_text += f"{content_preview}\n"
+            formatted_text += f"🔗 {url}\n\n"
+    
+    return formatted_text
+
+
+async def search_web(query: str, max_results: int = 5) -> str:
+    """Упрощенная функция поиска в интернете."""
+    import asyncio
+    
+    if not tavily_client:
+        return "❌ Поиск в интернете недоступен. Проверьте настройку TAVILY_API_KEY."
+    
+    try:
+        # Параметры поиска
+        search_params = {
+            "query": query,
+            "max_results": max_results,
+            "search_depth": "advanced",
+            "include_answer": True,
+            "include_raw_content": False
+        }
+        
+        # Выполняем поиск в отдельном потоке
+        results = await asyncio.to_thread(tavily_client.search, **search_params)
+        return format_search_results(results)
+    except Exception as e:
+        logger.error(f"Ошибка поиска Tavily: {e}")
+        return "❌ Произошла ошибка при выполнении поиска."
+
+
+async def search_news(query: str, max_results: int = 3) -> str:
+    """Поиск новостей по запросу."""
+    import asyncio
+    
+    # Добавляем ключевые слова для поиска новостей
+    news_query = f"{query} новости сегодня"
+    
+    # Включаем новостные домены
+    news_domains = [
+        "lenta.ru", "ria.ru", "tass.ru", "rbc.ru", "kommersant.ru",
+        "bbc.com", "cnn.com", "reuters.com", "news.google.com"
+    ]
+    
+    if not tavily_client:
+        return "❌ Поиск новостей недоступен. Проверьте настройку TAVILY_API_KEY."
+    
+    try:
+        # Параметры поиска
+        search_params = {
+            "query": news_query,
+            "max_results": max_results,
+            "search_depth": "advanced",
+            "include_answer": True,
+            "include_raw_content": False,
+            "include_domains": news_domains
+        }
+        
+        results = await asyncio.to_thread(tavily_client.search, **search_params)
+        formatted_results = format_search_results(results)
+        
+        # Заменяем заголовок на более подходящий для новостей
+        if formatted_results.startswith("🔍 **Результаты поиска:**"):
+            formatted_results = formatted_results.replace("🔍 **Результаты поиска:**", "📰 **Последние новости:**")
+        
+        return formatted_results
+    except Exception as e:
+        logger.error(f"Ошибка поиска новостей: {e}")
+        return "❌ Произошла ошибка при поиске новостей."
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
