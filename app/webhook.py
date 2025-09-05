@@ -1,4 +1,3 @@
-
 """
 Модуль для работы с Webhook для Telegram бота.
 Поддерживает как polling, так и webhook режимы работы.
@@ -65,96 +64,53 @@ class WebhookManager:
         # Создаем веб-приложение
         app = web.Application()
         
-        # Создаем ручной обработчик webhook для гарантии работы
+        # Основной обработчик webhook
         async def handle_webhook(request):
-            """Ручной обработчик webhook запросов с усиленной безопасностью."""
+            """Обработчик webhook запросов."""
             try:
-                logger.info(f"🌐 Получен webhook POST запрос на {request.path} от {request.remote}")
+                logger.info(f"🌐 Получен webhook {request.method} запрос на {request.path}")
                 
                 # Проверяем method
                 if request.method != 'POST':
-                    logger.warning(f"⚠️ Неправильный HTTP method: {request.method}")
-                    return web.Response(status=405)  # Method Not Allowed
+                    return web.Response(status=405)
                 
-                # Проверяем Content-Type
-                content_type = request.headers.get("Content-Type", "")
-                if "application/json" not in content_type:
-                    logger.warning(f"⚠️ Неправильный Content-Type: {content_type}")
-                    return web.Response(status=400)
-                
-                # Проверяем secret token для безопасности
-                if webhook_secret and webhook_secret != "telegram_webhook_secret":
-                    secret_header = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
-                    if secret_header != webhook_secret:
-                        logger.warning(f"⚠️ Неверный secret token: expected '{webhook_secret}', got '{secret_header}'")
-                        logger.warning(f"🕵️ Подозрительный запрос от {request.remote}")
-                        return web.Response(status=401)  # Unauthorized
-                
-                # Получаем данные обновления
+                # Получаем данные
                 try:
                     data = await request.json()
-                except Exception as e:
-                    logger.error(f"❌ Ошибка парсинга JSON: {e}")
+                except Exception:
                     return web.Response(status=400)
                 
-                # Проверяем структуру данных
+                # Проверяем структуру
                 if not isinstance(data, dict) or 'update_id' not in data:
-                    logger.warning(f"⚠️ Неправильная структура данных: {data}")
                     return web.Response(status=400)
                 
-                logger.info(f"📄 Полученные данные: update_id={data.get('update_id', '?')}")
+                logger.info(f"📄 Update ID: {data.get('update_id')}")
                 
+                # Обрабатываем через aiogram
                 from aiogram import types
                 update = types.Update(**data)
-                
-                # Обрабатываем обновление через диспетчер
                 await self.dp.feed_update(self.bot, update)
-                logger.info("✅ Обновление успешно обработано")
                 
+                logger.info("✅ Обновление обработано")
                 return web.Response(status=200)
                 
             except Exception as e:
-                logger.error(f"❌ Ошибка обработки webhook: {e}")
-                import traceback
-                logger.error(f"❌ Полная ошибка: {traceback.format_exc()}")
+                logger.error(f"❌ Ошибка webhook: {e}")
                 return web.Response(status=500)
         
-        # Регистрируем обработчик только для POST запросов на webhook
-        app.router.add_post("/", handle_webhook)
-        app.router.add_post("/webhook", handle_webhook)
-        
-        # Добавляем health check endpoint только для GET
+        # Health check для мониторинга
         async def health_check(request):
-            return web.json_response({"status": "ok", "bot": "telegram_ai_agent_v2", "webhook_path": webhook_path})
+            return web.json_response({"status": "ok", "service": "telegram_bot"})
         
-        # Обработчик favicon для избежания 404
-        async def favicon_handler(request):
-            return web.Response(status=204)  # No Content
+        # Регистрируем маршруты
+        app.router.add_post("/", handle_webhook)  # Основной webhook
+        app.router.add_post("/webhook", handle_webhook)  # Альтернативный путь
+        app.router.add_get("/health", health_check)  # Health check
         
-        # Логирование всех входящих запросов для диагностики
-        async def log_requests(request, handler):
-            logger.info(f"📥 Входящий запрос: {request.method} {request.path} от {request.remote}")
-            try:
-                response = await handler(request)
-                logger.info(f"📤 Ответ: {response.status}")
-                return response
-            except Exception as e:
-                logger.error(f"❌ Ошибка обработки запроса {request.path}: {e}")
-                return web.Response(status=500)
-        
-        # Добавляем middleware для логирования
-        app.middlewares.append(log_requests)
-        
-        # Регистрируем только GET маршруты для health check
-        app.router.add_get("/health", health_check)
-        app.router.add_get("/status", health_check)  # Альтернативный health check
-        app.router.add_get("/favicon.ico", favicon_handler)
-        app.router.add_head("/favicon.ico", favicon_handler)  # HEAD запросы тоже
-        
-        logger.info(f"Webhook app создан с путями: / и /webhook")
+        logger.info("📝 Webhook приложение создано")
         return app
     
-    async def run_webhook_server(self, port: int = None) -> None:
+    async def run_webhook_server(self, port: int = None):
         """
         Запуск webhook сервера.
         
