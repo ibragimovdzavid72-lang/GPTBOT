@@ -24,3 +24,6 @@ ffmpeg-python
 chromadb
 numpy
 scikit-learn
+
+# Поиск в интернете через Tavily API
+tavily-python==0.5.0
