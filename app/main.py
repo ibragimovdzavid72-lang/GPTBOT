@@ -63,10 +63,102 @@ DEFAULT_SYSTEM_PROMPT = (
     "- Общайся живо, иногда добавляй смайлы 🙂."
 )
 
-# Текст приветствия
+# Словари для локализации
+LOCALIZATION = {
+    "ru": {
+        "welcome": """🌟 ═══════════════════════════ 🌟
+⚡ AI Agent ⚡
+🌟 ═══════════════════════════ 🌟
+
+🚀 Ваш интеллектуальный помощник готов к работе!
+
+📋 Возможности:
+📂 Работа с документами и файлами
+🧠 Решение задач разного уровня
+😉 Создание контента
+💻 Работа с кодом
+✍️ Копирайтинг и рерайтинг
+🎨 Визуальный контент
+🖼️ Генерация изображений
+🌍 Перевод и краткий пересказ
+
+💡 Выберите действие из меню ниже:""",
+        "main_menu": "🏠 Главное меню",
+        "ai_chat": "💬 ИИ Чат",
+        "creativity": "🎨 Творчество", 
+        "settings": "🔧 Настройки",
+        "help": "ℹ️ Помощь",
+        "admin_panel": "👑 Админ-панель",
+        "ai_agent_pro": "⚡ AI Agent-PRO ⚡",
+        "language_interface": "🌐 Язык интерфейса",
+        "select_language": "🌐 Выберите язык:",
+        "ai_model": "🤖 Модель ИИ",
+        "language_set": "✅ Язык установлен: {lang}",
+        "back": "⬅️ Назад",
+        "russian": "🇷🇺 Русский",
+        "english": "🇺🇸 English",
+        "versions_title": "⚡ AI Agent – версии",
+        "version_free": "🔹 FREE",
+        "version_pro": "🔹 PRO", 
+        "version_ultra": "🔹 ULTRA",
+        "free_features": "– Базовый функционал (чат, переводы, простые тексты)\n– Ограниченный лимит сообщений\n– Без визуального контента",
+        "pro_features": "– Всё из FREE +\n– Работа с файлами и документами\n– Генерация изображений\n– Копирайтинг, рерайтинг, SEO\n– OCR (распознавание текста с картинок)",
+        "ultra_features": "– Всё из PRO +\n– Подключение к API (ChatGPT, MidJourney)\n– Визуальный контент без ограничений\n– Командная работа\n– Приоритетная скорость",
+        "functionality_title": "📌 Функционал AI Agent:",
+        "target_users": "👥 Целевые пользователи:\n\n📚 Студенты (написание дипломов/эссе/курсовых/сочинений/рефератов)\n\n✍️ Копирайтеры (написание на 100% уникальных текстов, рерайт, обход ИИ-детекта, обход \"Антиплагиат\")\n\n📱 Блогеры (создание контент-планов, триггерных заголовков, сторителлинга, сценариев для блога и Reels)\n\n🔍 SEO-специалисты (написание больших статей, парсинг поисковых систем, анализ по ключевым словам)\n\n📸 Распознавание текста с картинки (фотографии) и многое другое! 🚀"
+    },
+    "en": {
+        "welcome": """🌟 ═══════════════════════════ 🌟
+⚡ AI Agent ⚡
+🌟 ═══════════════════════════ 🌟
+
+🚀 Your intelligent assistant is ready to work!
+
+📋 Capabilities:
+📂 Document and file processing
+🧠 Problem solving at different levels
+😉 Content creation
+💻 Code development
+✍️ Copywriting and rewriting
+🎨 Visual content
+🖼️ Image generation
+🌍 Translation and summarization
+
+💡 Choose an action from the menu below:""",
+        "main_menu": "🏠 Main Menu", 
+        "ai_chat": "💬 AI Chat",
+        "creativity": "🎨 Creativity",
+        "settings": "🔧 Settings",
+        "help": "ℹ️ Help",
+        "admin_panel": "👑 Admin Panel",
+        "ai_agent_pro": "⚡ AI Agent-PRO ⚡",
+        "language_interface": "🌐 Interface Language",
+        "select_language": "🌐 Select language:",
+        "ai_model": "🤖 AI Model", 
+        "language_set": "✅ Language set to: {lang}",
+        "back": "⬅️ Back",
+        "russian": "🇷🇺 Русский",
+        "english": "🇺🇸 English",
+        "versions_title": "⚡ AI Agent – versions",
+        "version_free": "🔹 FREE",
+        "version_pro": "🔹 PRO",
+        "version_ultra": "🔹 ULTRA",
+        "free_features": "– Basic functionality (chat, translations, simple texts)\n– Limited message quota\n– No visual content",
+        "pro_features": "– Everything from FREE +\n– File and document processing\n– Image generation\n– Copywriting, rewriting, SEO\n– OCR (text recognition from images)",
+        "ultra_features": "– Everything from PRO +\n– API connections (ChatGPT, MidJourney)\n– Unlimited visual content\n– Team collaboration\n– Priority speed",
+        "functionality_title": "📌 AI Agent Functionality:",
+        "target_users": "👥 Target Users:\n\n📚 Students (writing theses/essays/coursework/compositions/reports)\n\n✍️ Copywriters (writing 100% unique texts, rewriting, bypassing AI detection, bypassing \"Anti-plagiarism\")\n\n📱 Bloggers (creating content plans, trigger headlines, storytelling, scripts for blogs and Reels)\n\n🔍 SEO specialists (writing large articles, search engine parsing, keyword analysis)\n\n📸 Text recognition from images (photos) and much more! 🚀"
+    }
+}
+
+def get_text(key: str, language: str = "ru", **kwargs) -> str:
+    """Получает локализованный текст."""
+    text = LOCALIZATION.get(language, LOCALIZATION["ru"]).get(key, key)
+    return text.format(**kwargs) if kwargs else text
+
+
 WELCOME_TEXT = """
 Добро пожаловать, {username}!
-Сегодня {date}
 
 🤖 Ваш AI Agent
 
@@ -77,19 +169,19 @@ WELCOME_TEXT = """
 main_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="💬 ИИ Чат", callback_data="ai_chat_menu"),
      InlineKeyboardButton(text="🎨 Творчество", callback_data="creative_menu")],
-    [InlineKeyboardButton(text="📊 Аналитика", callback_data="analytics_menu"),
-     InlineKeyboardButton(text="🔧 Настройки", callback_data="settings_menu")],
-    [InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")],
+    [InlineKeyboardButton(text="🔧 Настройки", callback_data="settings_menu"),
+     InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")],
+    [InlineKeyboardButton(text="⚡ AI Agent-PRO ⚡", callback_data="ai_agent_pro")],
 ])
 
 # Расширенное меню для администраторов
 admin_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="💬 ИИ Чат", callback_data="ai_chat_menu"),
      InlineKeyboardButton(text="🎨 Творчество", callback_data="creative_menu")],
-    [InlineKeyboardButton(text="📊 Аналитика", callback_data="analytics_menu"),
-     InlineKeyboardButton(text="🔧 Настройки", callback_data="settings_menu")],
-    [InlineKeyboardButton(text="👑 Админ-панель", callback_data="admin_panel"),
-     InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")],
+    [InlineKeyboardButton(text="🔧 Настройки", callback_data="settings_menu"),
+     InlineKeyboardButton(text="👑 Админ-панель", callback_data="admin_panel")],
+    [InlineKeyboardButton(text="⚡ AI Agent-PRO ⚡", callback_data="ai_agent_pro")],
+    [InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")],
 ])
 
 # Меню ИИ Чата
@@ -118,9 +210,7 @@ analytics_menu = InlineKeyboardMarkup(inline_keyboard=[
 # Меню настроек
 settings_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="🤖 Модель ИИ", callback_data="select_model"),
-     InlineKeyboardButton(text="🔊 Голосовые ответы", callback_data="tts_settings")],
-    [InlineKeyboardButton(text="🌐 Язык интерфейса", callback_data="language_settings"),
-     InlineKeyboardButton(text="🔔 Уведомления", callback_data="notification_settings")],
+     InlineKeyboardButton(text="🌍 Язык интерфейса", callback_data="language_settings")],
     [InlineKeyboardButton(text="⬅️ Главное меню", callback_data="back_to_main")],
 ])
 
@@ -200,11 +290,11 @@ async def on_shutdown() -> None:
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message) -> None:
     """Обработчик команды /start - единственная оставшаяся слэш команда."""
-    # Формируем персонализированное приветствие
-    username = message.from_user.username or message.from_user.first_name or "Пользователь"
-    current_date = datetime.now().strftime("%d.%m.%Y")
+    # Получаем предпочитаемый язык пользователя
+    user_lang = await get_user_language(message.from_user.id)
     
-    welcome_text = WELCOME_TEXT.format(username=username, date=current_date)
+    # Формируем модерное приветствие без персонализации
+    welcome_text = get_text("welcome", user_lang)
     
     # Показываем расширенное меню для супер-администратора, обычное для остальных
     if is_super_admin(message.from_user.id):
@@ -390,13 +480,15 @@ async def process_callback(callback_query: types.CallbackQuery) -> None:
     
     # 🔧 Обработчики настроек
     elif callback_query.data == "language_settings":
+        user_lang = await get_user_language(callback_query.from_user.id)
         language_menu = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🇷🇺 Русский", callback_data="set_lang_ru"),
-             InlineKeyboardButton(text="🇺🇸 English", callback_data="set_lang_en")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="settings_menu")]
+            [InlineKeyboardButton(text=get_text("russian", user_lang), callback_data="set_lang_ru"),
+             InlineKeyboardButton(text=get_text("english", user_lang), callback_data="set_lang_en")],
+            [InlineKeyboardButton(text=get_text("back", user_lang), callback_data="settings_menu")]
         ])
+        menu_text = f"<b>{get_text('language_interface', user_lang)}</b>\n\n{get_text('select_language', user_lang)}"
         await callback_query.message.answer(
-            "🌐 <b>Язык интерфейса</b>\n\nВыберите язык:",
+            menu_text,
             reply_markup=language_menu,
             parse_mode="HTML"
         )
@@ -408,8 +500,19 @@ async def process_callback(callback_query: types.CallbackQuery) -> None:
         )
     elif callback_query.data.startswith("set_lang_"):
         lang = callback_query.data.replace("set_lang_", "")
+        await set_user_language(callback_query.message, callback_query.from_user.id, lang)
+        
+        # Отображаем подтверждение на выбранном языке
         lang_names = {"ru": "Русский", "en": "English"}
-        await callback_query.message.answer(f"✅ Язык установлен: {lang_names.get(lang, lang)}")
+        confirmation_text = get_text("language_set", lang, lang=lang_names.get(lang, lang))
+        await callback_query.message.answer(confirmation_text)
+        
+        # Обновляем главное меню на новом языке
+        main_menu_text = get_text("main_menu", lang)
+        if is_super_admin(callback_query.from_user.id):
+            await callback_query.message.answer(f"✨ {main_menu_text}", reply_markup=admin_menu)
+        else:
+            await callback_query.message.answer(f"✨ {main_menu_text}", reply_markup=main_menu)
     elif callback_query.data == "reset_context":
         # Вызываем команду сброса контекста
         await cmd_reset_context(callback_query.message)
@@ -418,14 +521,54 @@ async def process_callback(callback_query: types.CallbackQuery) -> None:
             await callback_query.message.answer("🏠 <b>Главное меню</b>", reply_markup=admin_menu)
         else:
             await callback_query.message.answer("🏠 <b>Главное меню</b>", reply_markup=main_menu)
+    elif callback_query.data == "ai_agent_pro":
+        user_lang = await get_user_language(callback_query.from_user.id)
+        
+        # Создаём карточку с версиями AI Agent
+        versions_text = f"<b>{get_text('versions_title', user_lang)}</b>\n\n"
+        
+        # Версия FREE
+        versions_text += f"{get_text('version_free', user_lang)}\n"
+        versions_text += f"{get_text('free_features', user_lang)}\n\n"
+        
+        # Версия PRO  
+        versions_text += f"{get_text('version_pro', user_lang)}\n"
+        versions_text += f"{get_text('pro_features', user_lang)}\n\n"
+        
+        # Версия ULTRA
+        versions_text += f"{get_text('version_ultra', user_lang)}\n"
+        versions_text += f"{get_text('ultra_features', user_lang)}\n\n"
+        
+        # Функционал AI Agent
+        versions_text += f"{get_text('functionality_title', user_lang)}\n\n"
+        versions_text += f"{get_text('target_users', user_lang)}"
+        
+        pro_menu = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=get_text("back", user_lang), callback_data="back_to_main")]
+        ])
+        
+        await callback_query.message.answer(
+            versions_text,
+            reply_markup=pro_menu,
+            parse_mode="HTML"
+        )
     elif callback_query.data == "help":
         # Отображаем упрощённую справку
         help_text = (
             "ℹ️ <b>Интерфейс бота:</b>\n\n"
             "📋 <b>Основные разделы:</b>\n"
             "💬 ИИ Чат - Общение с ИИ\n"
+            "🔧 Настройки - Персонализация\n\n"
+            "🚀 <b>Начните с /start</b> для возвращения в главное меню!"
+        )
+        
+        await callback_query.message.answer(help_text, parse_mode="HTML")
+        # Отображаем упрощённую справку
+        help_text = (
+            "ℹ️ <b>Интерфейс бота:</b>\n\n"
+            "📋 <b>Основные разделы:</b>\n"
+            "💬 ИИ Чат - Общение с ИИ\n"
             "🎨 Творчество - Создание изображений\n"
-            "📊 Аналитика - Статистика использования\n"
             "🔧 Настройки - Персонализация\n\n"
             "🚀 <b>Начните с /start</b> для возвращения в главное меню!"
         )
@@ -732,88 +875,9 @@ async def cmd_mode(message: types.Message, command: CommandObject) -> None:
 
 
 @dp.message(Command("reset_context"))
-async def handle_image_message(message: types.Message) -> None:
-    """Улучшенный обработчик сообщений с изображениями."""
-    global pool
-    
-    # Проверяем, активен ли бот
-    if not await is_bot_active(pool):
-        await message.answer("⛔ Бот временно отключён администратором.")
-        return
-    
-    # Показываем индикатор "печатает"
-    await bot.send_chat_action(message.chat.id, "typing")
-    processing_msg = await message.answer("👀 Анализирую изображение...")
-    
-    try:
-        # Получаем самое большое изображение
-        photo = message.photo[-1]
-        file_info = await bot.get_file(photo.file_id)
-        file_path = file_info.file_path
-        file_url = f"https://api.telegram.org/file/bot{settings.TELEGRAM_BOT_TOKEN}/{file_path}"
-        
-        # Получаем текст сообщения
-        caption = message.caption or "Опиши что изображено на этой картинке подробно"
-        
-        # Скачиваем изображение
-        import aiohttp
-        async with aiohttp.ClientSession() as session:
-            async with session.get(file_url) as resp:
-                if resp.status != 200:
-                    raise Exception(f"Не удалось скачать: {resp.status}")
-                image_data = await resp.read()
-        
-        # Анализируем через OpenAI Vision
-        try:
-            response = await openai_vision(image_data, caption)
-        except Exception as e:
-            logger.error(f"Ошибка анализа: {e}")
-            response = "❌ Не удалось проанализировать изображение."
-        
-        # Усечение длинных ответов
-        if len(response) > settings.MAX_TG_REPLY:
-            response = response[:settings.MAX_TG_REPLY] + "... (ответ усечён)"
-        
-        await processing_msg.delete()
-        
-        # Кнопки для дополнительных действий
-        image_menu = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="⚡ Сгенерировать похожий арт", callback_data=f"generate_similar_{hash(response)%10000}")],
-            [InlineKeyboardButton(text="🔄 Сбросить диалог", callback_data="reset_context")]
-        ])
-        
-        # Сохраняем описание
-        art_prompts_cache[f"{hash(response)%10000}"] = response
-        
-        await message.answer(
-            f"👀 <b>Анализ изображения:</b>\n\n{response}",
-            reply_markup=image_menu,
-            parse_mode="HTML"
-        )
-        
-        # Записываем в базу
-        if pool:
-            try:
-                async with pool.acquire() as conn:
-                    await conn.execute(
-                        "INSERT INTO logs (username, command, args, answer) VALUES ($1, $2, $3, $4)",
-                        message.from_user.username, "vision", caption, response
-                    )
-                    await conn.execute(
-                        "INSERT INTO dialog_history (user_id, role, content) VALUES ($1, $2, $3)",
-                        message.from_user.id, "user", f"[Изображение] {caption}"
-                    )
-                    await conn.execute(
-                        "INSERT INTO dialog_history (user_id, role, content) VALUES ($1, $2, $3)",
-                        message.from_user.id, "assistant", response
-                    )
-            except Exception as e:
-                logger.error(f"Ошибка записи в БД: {e}")
-    
-    except Exception as e:
-        await processing_msg.delete()
-        logger.error(f"Ошибка анализа изображения: {e}")
-        await message.answer("❌ Произошла ошибка при анализе изображения.")
+async def cmd_reset_context_handler(message: types.Message) -> None:
+    """Обработчик команды /reset_context."""
+    await cmd_reset_context(message)
 
 
 async def generate_art_image(message: types.Message, text: str, size: str = "1024x1024") -> None:
@@ -1028,6 +1092,75 @@ async def handle_voice_message(message: types.Message) -> None:
         await message.answer("❌ Произошла ошибка при обработке голосового сообщения. Попробуйте ещё раз.")
 
 
+async def set_user_language(message: types.Message, user_id: int, language: str) -> None:
+    """Устанавливает предпочитаемый язык интерфейса для пользователя."""
+    global pool
+    
+    if not pool:
+        await message.answer("❌ База данных недоступна. Настройки не могут быть сохранены.")
+        return
+    
+    try:
+        async with pool.acquire() as conn:
+            # Проверяем, нет ли колонки language, если нет - добавляем
+            try:
+                await conn.execute(
+                    "ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS language TEXT DEFAULT 'ru'"
+                )
+            except Exception as e:
+                logger.debug(f"Колонка language уже существует или ошибка: {e}")
+            
+            # Проверяем, есть ли уже настройки пользователя
+            existing = await conn.fetchrow(
+                "SELECT user_id FROM user_settings WHERE user_id = $1",
+                user_id
+            )
+            
+            if existing:
+                # Обновляем существующие настройки
+                await conn.execute(
+                    "UPDATE user_settings SET language = $1, updated_at = now() WHERE user_id = $2",
+                    language, user_id
+                )
+            else:
+                # Создаем новые настройки с всеми полями по умолчанию
+                await conn.execute(
+                    "INSERT INTO user_settings (user_id, language, preferred_model, tts_enabled, tts_voice, personal_assistant_enabled) VALUES ($1, $2, $3, $4, $5, $6)",
+                    user_id, language, "gpt-4o", False, "alloy", False
+                )
+        
+        logger.info(f"Пользователь {user_id} изменил язык на {language}")
+    except Exception as e:
+        logger.error(f"Ошибка при сохранении языка пользователя: {e}")
+        await message.answer("❌ Произошла ошибка при сохранении настроек. Попробуйте позже.")
+
+
+async def get_user_language(user_id: int) -> str:
+    """Получает предпочитаемый язык пользователя."""
+    global pool
+    
+    if not pool:
+        return "ru"  # Язык по умолчанию
+    
+    try:
+        async with pool.acquire() as conn:
+            # Проверяем, существует ли колонка language
+            try:
+                row = await conn.fetchrow(
+                    "SELECT language FROM user_settings WHERE user_id = $1",
+                    user_id
+                )
+                if row and row["language"]:
+                    return row["language"]
+            except Exception:
+                # Колонка language еще не существует
+                pass
+    except Exception as e:
+        logger.error(f"Ошибка при получении языка пользователя: {e}")
+    
+    return "ru"  # Язык по умолчанию
+
+
 async def set_user_model(message: types.Message, model: str) -> None:
     """Устанавливает предпочитаемую модель ИИ для пользователя."""
     global pool
@@ -1053,14 +1186,15 @@ async def set_user_model(message: types.Message, model: str) -> None:
             else:
                 # Создаем новые настройки с всеми полями по умолчанию
                 await conn.execute(
-                    "INSERT INTO user_settings (user_id, preferred_model, tts_enabled, tts_voice) VALUES ($1, $2, $3, $4)",
-                    message.from_user.id, model, False, "alloy"
+                    "INSERT INTO user_settings (user_id, preferred_model, tts_enabled, tts_voice, language) VALUES ($1, $2, $3, $4, $5)",
+                    message.from_user.id, model, False, "alloy", "ru"
                 )
         
         logger.info(f"Пользователь {message.from_user.id} изменил модель на {model}")
     except Exception as e:
         logger.error(f"Ошибка при сохранении модели пользователя: {e}")
         await message.answer("❌ Произошла ошибка при сохранении настроек. Попробуйте позже.")
+
 
 
 async def show_tts_settings(message: types.Message) -> None:
@@ -1798,7 +1932,20 @@ async def main() -> None:
     
     # Проверяем режим работы: webhook или polling
     webhook_url = os.getenv("WEBHOOK_URL")
-    use_webhook = webhook_url and webhook_url.strip() and "your-app" not in webhook_url
+    port = os.getenv("PORT")
+    
+    # Для Railway webhook нужны WEBHOOK_URL и PORT
+    use_webhook = (
+        webhook_url and 
+        webhook_url.strip() and 
+        "your-app" not in webhook_url.lower() and
+        port  # Railway автоматически ставит PORT
+    )
+    
+    logger.info(f"🔍 Проверка переменных:")
+    logger.info(f"   WEBHOOK_URL: {webhook_url}")
+    logger.info(f"   PORT: {port}")
+    logger.info(f"   Используем webhook: {use_webhook}")
     
     if use_webhook:
         logger.info(f"🌐 Используется WEBHOOK режим (безопасно для Railway): {webhook_url}")
