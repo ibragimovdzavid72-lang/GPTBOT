@@ -138,8 +138,6 @@ admin_commands_menu = InlineKeyboardMarkup(inline_keyboard=[
      InlineKeyboardButton(text="⚠️ Ошибки системы", callback_data="errors")],
     [InlineKeyboardButton(text="✅ Включить бота", callback_data="bot_on"),
      InlineKeyboardButton(text="❌ Выключить бота", callback_data="bot_off")],
-    [InlineKeyboardButton(text="🔧 Управление", callback_data="admin_management"),
-     InlineKeyboardButton(text="📋 Логи системы", callback_data="admin_logs")],
     [InlineKeyboardButton(text="⬅️ Главное меню", callback_data="back_to_main")],
 ])
 
@@ -256,9 +254,11 @@ async def show_user_personal_stats(message: types.Message, user_id: int) -> None
         stats_text += f"💬 Сообщений: {user_logs}\n"
         
         if user_settings:
+            check_yes = "✅"
+            check_no = "❌"
             stats_text += f"🤖 Модель: {user_settings['preferred_model'] or 'gpt-4o'}\n"
-            stats_text += f"🔊 TTS: {'\u2705' if user_settings['tts_enabled'] else '\u274c'}\n"
-            stats_text += f"🧠 Личный ассистент: {'\u2705' if user_settings['personal_assistant_enabled'] else '\u274c'}\n"
+            stats_text += f"🔊 TTS: {check_yes if user_settings['tts_enabled'] else check_no}\n"
+            stats_text += f"🧠 Личный ассистент: {check_yes if user_settings['personal_assistant_enabled'] else check_no}\n"
         
         pa_stats = await personal_assistant.get_user_stats(user_id)
         if pa_stats.get("total_memories", 0) > 0:
