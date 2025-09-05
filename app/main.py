@@ -22,7 +22,7 @@ import asyncpg
 from .config import settings
 from .suggest import generate_prompt_from_logs
 from .ai import openai_chat, openai_image, openai_vision, openai_tts, openai_stt, openai_chat_with_history, openai_chat_with_personal_context
-from .admin import is_admin, cmd_admin_stats, cmd_errors, cmd_bot_on, cmd_bot_off, is_bot_active
+from .admin import is_admin, is_super_admin, cmd_admin_stats, cmd_errors, cmd_bot_on, cmd_bot_off, is_bot_active
 from .webhook import WebhookManager
 from .vector_memory import personal_assistant
 
@@ -66,17 +66,11 @@ DEFAULT_SYSTEM_PROMPT = (
 # Текст приветствия
 WELCOME_TEXT = """
 Добро пожаловать, {username}!
-Сегодня {date}, ваш лимит: 20 запросов
+Сегодня {date}
 
-🧠 Ваш AI Agent
+🤖 Ваш AI Agent
 
-🤖 Мультимодельный AI (GPT-4o)
-• 🎨 Генерация изображений  
-• 📊 Продвинутая аналитика
-• 💎 Персонализация
-
-🚀 Используйте кнопки ниже для быстрого доступа к всем функциям!
-Или просто напишите любой вопрос и получите умные ответы от современного AI!
+🚀 Используйте кнопки ниже для доступа к функциям!
 """
 
 # Создание главного меню с категоризацией функций
@@ -85,8 +79,7 @@ main_menu = InlineKeyboardMarkup(inline_keyboard=[
      InlineKeyboardButton(text="🎨 Творчество", callback_data="creative_menu")],
     [InlineKeyboardButton(text="📊 Аналитика", callback_data="analytics_menu"),
      InlineKeyboardButton(text="🔧 Настройки", callback_data="settings_menu")],
-    [InlineKeyboardButton(text="🧠 Личный ассистент", callback_data="personal_assistant"),
-     InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")],
+    [InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")],
 ])
 
 # Расширенное меню для администраторов
@@ -95,9 +88,8 @@ admin_menu = InlineKeyboardMarkup(inline_keyboard=[
      InlineKeyboardButton(text="🎨 Творчество", callback_data="creative_menu")],
     [InlineKeyboardButton(text="📊 Аналитика", callback_data="analytics_menu"),
      InlineKeyboardButton(text="🔧 Настройки", callback_data="settings_menu")],
-    [InlineKeyboardButton(text="🧠 Личный ассистент", callback_data="personal_assistant"),
-     InlineKeyboardButton(text="👑 Админ-панель", callback_data="admin_panel")],
-    [InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")],
+    [InlineKeyboardButton(text="👑 Админ-панель", callback_data="admin_panel"),
+     InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")],
 ])
 
 # Меню ИИ Чата
@@ -214,8 +206,8 @@ async def cmd_start(message: types.Message) -> None:
     
     welcome_text = WELCOME_TEXT.format(username=username, date=current_date)
     
-    # Показываем расширенное меню для администраторов
-    if is_admin(message.from_user.id):
+    # Показываем расширенное меню для супер-администратора, обычное для остальных
+    if is_super_admin(message.from_user.id):
         await message.answer(welcome_text, reply_markup=admin_menu)
     else:
         await message.answer(welcome_text, reply_markup=main_menu)
@@ -422,55 +414,45 @@ async def process_callback(callback_query: types.CallbackQuery) -> None:
         # Вызываем команду сброса контекста
         await cmd_reset_context(callback_query.message)
         # Возвращаемся в главное меню
-        if is_admin(callback_query.from_user.id):
+        if is_super_admin(callback_query.from_user.id):
             await callback_query.message.answer("🏠 <b>Главное меню</b>", reply_markup=admin_menu)
         else:
             await callback_query.message.answer("🏠 <b>Главное меню</b>", reply_markup=main_menu)
     elif callback_query.data == "help":
-        # Отображаем обновлённую справку
+        # Отображаем упрощённую справку
         help_text = (
             "ℹ️ <b>Интерфейс бота:</b>\n\n"
-            "🎆 <b>Как пользоваться:</b>\n"
-            "• Навигация по кнопкам меню\n"
-            "• Простое общение текстом\n"
-            "• Голосовые сообщения\n"
-            "• Отправка изображений\n\n"
             "📋 <b>Основные разделы:</b>\n"
             "💬 ИИ Чат - Общение с ИИ\n"
             "🎨 Творчество - Создание изображений\n"
             "📊 Аналитика - Статистика использования\n"
-            "🔧 Настройки - Персонализация\n"
-            "🧠 Личный ассистент - Векторная память\n\n"
+            "🔧 Настройки - Персонализация\n\n"
             "🚀 <b>Начните с /start</b> для возвращения в главное меню!"
         )
         
-        # Добавляем информацию об админских возможностях
-        if is_admin(callback_query.from_user.id):
-            help_text += (
-                "\n\n👑 <b>Админ-возможности:</b>\n"
-                "• Мониторинг системы\n"
-                "• Управление ботом\n"
-                "• Просмотр ошибок"
-            )
-        
         await callback_query.message.answer(help_text, parse_mode="HTML")
     elif callback_query.data == "admin_panel":
-        # Проверяем, является ли пользователь администратором с расширенным логированием
+        # Проверяем, является ли пользователь супер-администратором с расширенным логированием
         user_id = callback_query.from_user.id
         admins_raw = os.getenv("ADMINS", "")
-        logger.info(f"👑 ДИАГНОСТИКА АДМИН ДОСТУПА:")
+        logger.info(f"👑 ДИАГНОСТИКА СУПЕР-АДМИН ДОСТУПА:")
         logger.info(f"   user_id={user_id} (тип: {type(user_id)})")
         logger.info(f"   ADMINS env={repr(admins_raw)}")
         logger.info(f"   ADMINS parsed={settings.ADMINS}")
-        logger.info(f"   ADMINS types={[type(x) for x in settings.ADMINS]}")
+        logger.info(f"   is_admin result={is_admin(user_id)}")
+        logger.info(f"   is_super_admin result={is_super_admin(user_id)}")
         
-        if is_admin(user_id):
-            logger.info(f"✅ Админский доступ РАЗРЕШЁН для user_id={user_id}")
+        if is_super_admin(user_id):
+            logger.info(f"✅ Супер-админский доступ РАЗРЕШЁН для user_id={user_id}")
             await callback_query.message.answer("👑 <b>Админ-панель</b>", reply_markup=admin_commands_menu)
         else:
-            logger.warning(f"❌ Админский доступ ЗАПРЕЩЁН для user_id={user_id}")
-            logger.warning(f"💡 Чтобы получить доступ, добавьте {user_id} в переменную ADMINS")
-            await callback_query.message.answer(f"⛔ У вас нет доступа к админ-панели.\n\n📝 Ваш ID: {user_id}\n\n💡 Для получения доступа обратитесь к администратору.")
+            logger.warning(f"❌ Супер-админский доступ ЗАПРЕЩЁН для user_id={user_id}")
+            logger.warning(f"💡 Админ-панель доступна только основному администратору")
+            await callback_query.message.answer(
+                f"⛔ У вас нет доступа к админ-панели.\n\n"
+                f"📝 Ваш ID: {user_id}\n\n"
+                f"💡 Админ-панель доступна только основному администратору."
+            )
     elif callback_query.data == "select_model":
         await callback_query.message.answer("🤖 <b>Выберите модель ИИ</b>", reply_markup=model_selection_menu)
     elif callback_query.data == "personal_assistant":
@@ -502,34 +484,58 @@ async def process_callback(callback_query: types.CallbackQuery) -> None:
         await show_tts_settings(callback_query.message)
     # Админские команды
     elif callback_query.data == "admin_stats":
+        user_id = callback_query.from_user.id
+        logger.info(f"🔍 ПРОВЕРКА ДОСТУПА К admin_stats:")
+        logger.info(f"   user_id={user_id} (тип: {type(user_id)})")
+        logger.info(f"   is_admin result={is_admin(user_id)}")
         if is_admin(callback_query.from_user.id):
+            logger.info(f"✅ Доступ к admin_stats РАЗРЕШЁН для user_id={user_id}")
             await cmd_admin_stats(callback_query.message, pool)
         else:
+            logger.warning(f"❌ Доступ к admin_stats ЗАПРЕЩЁН для user_id={user_id}")
             await callback_query.message.answer("⛔ У вас нет доступа к этой команде.")
     elif callback_query.data == "errors":
+        user_id = callback_query.from_user.id
+        logger.info(f"🔍 ПРОВЕРКА ДОСТУПА К errors:")
+        logger.info(f"   user_id={user_id} (тип: {type(user_id)})")
+        logger.info(f"   is_admin result={is_admin(user_id)}")
         if is_admin(callback_query.from_user.id):
+            logger.info(f"✅ Доступ к errors РАЗРЕШЁН для user_id={user_id}")
             await cmd_errors(callback_query.message, pool)
         else:
+            logger.warning(f"❌ Доступ к errors ЗАПРЕЩЁН для user_id={user_id}")
             await callback_query.message.answer("⛔ У вас нет доступа к этой команде.")
     elif callback_query.data == "bot_on":
+        user_id = callback_query.from_user.id
+        logger.info(f"🔍 ПРОВЕРКА ДОСТУПА К bot_on:")
+        logger.info(f"   user_id={user_id} (тип: {type(user_id)})")
+        logger.info(f"   is_admin result={is_admin(user_id)}")
         if is_admin(callback_query.from_user.id):
+            logger.info(f"✅ Доступ к bot_on РАЗРЕШЁН для user_id={user_id}")
             await cmd_bot_on(callback_query.message, pool)
         else:
+            logger.warning(f"❌ Доступ к bot_on ЗАПРЕЩЁН для user_id={user_id}")
             await callback_query.message.answer("⛔ У вас нет доступа к этой команде.")
     elif callback_query.data == "bot_off":
+        user_id = callback_query.from_user.id
+        logger.info(f"🔍 ПРОВЕРКА ДОСТУПА К bot_off:")
+        logger.info(f"   user_id={user_id} (тип: {type(user_id)})")
+        logger.info(f"   is_admin result={is_admin(user_id)}")
         if is_admin(callback_query.from_user.id):
+            logger.info(f"✅ Доступ к bot_off РАЗРЕШЁН для user_id={user_id}")
             await cmd_bot_off(callback_query.message, pool)
         else:
+            logger.warning(f"❌ Доступ к bot_off ЗАПРЕЩЁН для user_id={user_id}")
             await callback_query.message.answer("⛔ У вас нет доступа к этой команде.")
     elif callback_query.data == "back_to_main":
         # Возвращаемся в главное меню
-        if is_admin(callback_query.from_user.id):
+        if is_super_admin(callback_query.from_user.id):
             await callback_query.message.answer("🏠 <b>Главное меню</b>", reply_markup=admin_menu)
         else:
             await callback_query.message.answer("🏠 <b>Главное меню</b>", reply_markup=main_menu)
     elif callback_query.data == "back_to_settings":
         # Не нужно, так как settings_menu убрано
-        if is_admin(callback_query.from_user.id):
+        if is_super_admin(callback_query.from_user.id):
             await callback_query.message.answer("🏠 <b>Главное меню</b>", reply_markup=admin_menu)
         else:
             await callback_query.message.answer("🏠 <b>Главное меню</b>", reply_markup=main_menu)
@@ -568,7 +574,7 @@ async def process_callback(callback_query: types.CallbackQuery) -> None:
         await set_user_model(callback_query.message, model)
         await callback_query.message.answer(f"✅ Модель ИИ успешно изменена на {model}!")
         # Возвращаемся в главное меню
-        if is_admin(callback_query.from_user.id):
+        if is_super_admin(callback_query.from_user.id):
             await callback_query.message.answer("🏠 <b>Главное меню</b>", reply_markup=admin_menu)
         else:
             await callback_query.message.answer("🏠 <b>Главное меню</b>", reply_markup=main_menu)
@@ -680,7 +686,7 @@ async def process_callback(callback_query: types.CallbackQuery) -> None:
             parse_mode="HTML"
         )
         # Возвращаемся в главное меню
-        if is_admin(callback_query.from_user.id):
+        if is_super_admin(callback_query.from_user.id):
             await callback_query.message.answer("🏠 <b>Главное меню</b>", reply_markup=admin_menu)
         else:
             await callback_query.message.answer("🏠 <b>Главное меню</b>", reply_markup=main_menu)
