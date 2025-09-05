@@ -90,6 +90,7 @@ LOCALIZATION = {
         "help": "ℹ️ Помощь",
         "admin_panel": "👑 Админ-панель",
         "ai_agent_pro": "⚡ AI Agent-PRO ⚡",
+        "change_language": "🌐 Смена языка 🌐",
         "language_interface": "🌐 Язык интерфейса",
         "select_language": "🌐 Выберите язык:",
         "ai_model": "🤖 Модель ИИ",
@@ -132,6 +133,7 @@ LOCALIZATION = {
         "help": "ℹ️ Help",
         "admin_panel": "👑 Admin Panel",
         "ai_agent_pro": "⚡ AI Agent-PRO ⚡",
+        "change_language": "🌐 Change Language 🌐",
         "language_interface": "🌐 Interface Language",
         "select_language": "🌐 Select language:",
         "ai_model": "🤖 AI Model", 
@@ -157,6 +159,31 @@ def get_text(key: str, language: str = "ru", **kwargs) -> str:
     return text.format(**kwargs) if kwargs else text
 
 
+def get_main_menu(user_lang: str = "ru") -> InlineKeyboardMarkup:
+    """Создаёт главное меню на соответствующем языке."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=get_text("ai_chat", user_lang), callback_data="ai_chat_menu"),
+         InlineKeyboardButton(text=get_text("creativity", user_lang), callback_data="creative_menu")],
+        [InlineKeyboardButton(text=get_text("settings", user_lang), callback_data="settings_menu"),
+         InlineKeyboardButton(text=get_text("help", user_lang), callback_data="help")],
+        [InlineKeyboardButton(text=get_text("ai_agent_pro", user_lang), callback_data="ai_agent_pro"),
+         InlineKeyboardButton(text=get_text("change_language", user_lang), callback_data="change_language")],
+    ])
+
+
+def get_admin_menu(user_lang: str = "ru") -> InlineKeyboardMarkup:
+    """Создаёт админское меню на соответствующем языке."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=get_text("ai_chat", user_lang), callback_data="ai_chat_menu"),
+         InlineKeyboardButton(text=get_text("creativity", user_lang), callback_data="creative_menu")],
+        [InlineKeyboardButton(text=get_text("settings", user_lang), callback_data="settings_menu"),
+         InlineKeyboardButton(text=get_text("admin_panel", user_lang), callback_data="admin_panel")],
+        [InlineKeyboardButton(text=get_text("ai_agent_pro", user_lang), callback_data="ai_agent_pro"),
+         InlineKeyboardButton(text=get_text("change_language", user_lang), callback_data="change_language")],
+        [InlineKeyboardButton(text=get_text("help", user_lang), callback_data="help")],
+    ])
+
+
 WELCOME_TEXT = """
 Добро пожаловать, {username}!
 
@@ -171,7 +198,8 @@ main_menu = InlineKeyboardMarkup(inline_keyboard=[
      InlineKeyboardButton(text="🎨 Творчество", callback_data="creative_menu")],
     [InlineKeyboardButton(text="🔧 Настройки", callback_data="settings_menu"),
      InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")],
-    [InlineKeyboardButton(text="⚡ AI Agent-PRO ⚡", callback_data="ai_agent_pro")],
+    [InlineKeyboardButton(text="⚡ AI Agent-PRO ⚡", callback_data="ai_agent_pro"),
+     InlineKeyboardButton(text="🌐 Смена языка 🌐", callback_data="change_language")],
 ])
 
 # Расширенное меню для администраторов
@@ -180,7 +208,8 @@ admin_menu = InlineKeyboardMarkup(inline_keyboard=[
      InlineKeyboardButton(text="🎨 Творчество", callback_data="creative_menu")],
     [InlineKeyboardButton(text="🔧 Настройки", callback_data="settings_menu"),
      InlineKeyboardButton(text="👑 Админ-панель", callback_data="admin_panel")],
-    [InlineKeyboardButton(text="⚡ AI Agent-PRO ⚡", callback_data="ai_agent_pro")],
+    [InlineKeyboardButton(text="⚡ AI Agent-PRO ⚡", callback_data="ai_agent_pro"),
+     InlineKeyboardButton(text="🌐 Смена языка 🌐", callback_data="change_language")],
     [InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")],
 ])
 
@@ -298,9 +327,9 @@ async def cmd_start(message: types.Message) -> None:
     
     # Показываем расширенное меню для супер-администратора, обычное для остальных
     if is_super_admin(message.from_user.id):
-        await message.answer(welcome_text, reply_markup=admin_menu)
+        await message.answer(welcome_text, reply_markup=get_admin_menu(user_lang))
     else:
-        await message.answer(welcome_text, reply_markup=main_menu)
+        await message.answer(welcome_text, reply_markup=get_main_menu(user_lang))
 
 
 # ============================================================================
@@ -505,14 +534,25 @@ async def process_callback(callback_query: types.CallbackQuery) -> None:
         # Отображаем подтверждение на выбранном языке
         lang_names = {"ru": "Русский", "en": "English"}
         confirmation_text = get_text("language_set", lang, lang=lang_names.get(lang, lang))
-        await callback_query.message.answer(confirmation_text)
         
-        # Обновляем главное меню на новом языке
-        main_menu_text = get_text("main_menu", lang)
-        if is_super_admin(callback_query.from_user.id):
-            await callback_query.message.answer(f"✨ {main_menu_text}", reply_markup=admin_menu)
-        else:
-            await callback_query.message.answer(f"✨ {main_menu_text}", reply_markup=main_menu)
+        # Обновляем сообщение с главным меню на новом языке
+        welcome_text = get_text("welcome", lang)
+        
+        # Показываем подтверждение + обновлённое меню
+        full_text = f"{confirmation_text}\n\n{welcome_text}"
+        
+        try:
+            if is_super_admin(callback_query.from_user.id):
+                await callback_query.message.edit_text(full_text, reply_markup=get_admin_menu(lang))
+            else:
+                await callback_query.message.edit_text(full_text, reply_markup=get_main_menu(lang))
+        except Exception as e:
+            # Если редактирование не удалось
+            await callback_query.message.answer(confirmation_text)
+            if is_super_admin(callback_query.from_user.id):
+                await callback_query.message.answer(welcome_text, reply_markup=get_admin_menu(lang))
+            else:
+                await callback_query.message.answer(welcome_text, reply_markup=get_main_menu(lang))
     elif callback_query.data == "reset_context":
         # Вызываем команду сброса контекста
         await cmd_reset_context(callback_query.message)
@@ -539,6 +579,9 @@ async def process_callback(callback_query: types.CallbackQuery) -> None:
         versions_text += f"{get_text('version_ultra', user_lang)}\n"
         versions_text += f"{get_text('ultra_features', user_lang)}\n\n"
         
+        # Разделитель
+        versions_text += "───\n\n"
+        
         # Функционал AI Agent
         versions_text += f"{get_text('functionality_title', user_lang)}\n\n"
         versions_text += f"{get_text('target_users', user_lang)}"
@@ -547,11 +590,44 @@ async def process_callback(callback_query: types.CallbackQuery) -> None:
             [InlineKeyboardButton(text=get_text("back", user_lang), callback_data="back_to_main")]
         ])
         
-        await callback_query.message.answer(
-            versions_text,
-            reply_markup=pro_menu,
-            parse_mode="HTML"
-        )
+        # Используем edit_message_text вместо нового сообщения
+        try:
+            await callback_query.message.edit_text(
+                versions_text,
+                reply_markup=pro_menu,
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            # Если редактирование не удалось, отправляем новое сообщение
+            await callback_query.message.answer(
+                versions_text,
+                reply_markup=pro_menu,
+                parse_mode="HTML"
+            )
+    elif callback_query.data == "change_language":
+        user_lang = await get_user_language(callback_query.from_user.id)
+        
+        language_menu = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=get_text("russian", user_lang), callback_data="set_lang_ru"),
+             InlineKeyboardButton(text=get_text("english", user_lang), callback_data="set_lang_en")],
+            [InlineKeyboardButton(text=get_text("back", user_lang), callback_data="back_to_main")]
+        ])
+        
+        menu_text = f"<b>{get_text('language_interface', user_lang)}</b>\n\n{get_text('select_language', user_lang)}"
+        
+        # Используем edit_message_text
+        try:
+            await callback_query.message.edit_text(
+                menu_text,
+                reply_markup=language_menu,
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            await callback_query.message.answer(
+                menu_text,
+                reply_markup=language_menu,
+                parse_mode="HTML"
+            )
     elif callback_query.data == "help":
         # Отображаем упрощённую справку
         help_text = (
@@ -671,11 +747,21 @@ async def process_callback(callback_query: types.CallbackQuery) -> None:
             logger.warning(f"❌ Доступ к bot_off ЗАПРЕЩЁН для user_id={user_id}")
             await callback_query.message.answer("⛔ У вас нет доступа к этой команде.")
     elif callback_query.data == "back_to_main":
-        # Возвращаемся в главное меню
-        if is_super_admin(callback_query.from_user.id):
-            await callback_query.message.answer("🏠 <b>Главное меню</b>", reply_markup=admin_menu)
-        else:
-            await callback_query.message.answer("🏠 <b>Главное меню</b>", reply_markup=main_menu)
+        # Возвращаемся в главное меню с редактированием сообщения
+        user_lang = await get_user_language(callback_query.from_user.id)
+        welcome_text = get_text("welcome", user_lang)
+        
+        try:
+            if is_super_admin(callback_query.from_user.id):
+                await callback_query.message.edit_text(welcome_text, reply_markup=get_admin_menu(user_lang))
+            else:
+                await callback_query.message.edit_text(welcome_text, reply_markup=get_main_menu(user_lang))
+        except Exception as e:
+            # Если редактирование не удалось
+            if is_super_admin(callback_query.from_user.id):
+                await callback_query.message.answer(welcome_text, reply_markup=get_admin_menu(user_lang))
+            else:
+                await callback_query.message.answer(welcome_text, reply_markup=get_main_menu(user_lang))
     elif callback_query.data == "back_to_settings":
         # Не нужно, так как settings_menu убрано
         if is_super_admin(callback_query.from_user.id):
