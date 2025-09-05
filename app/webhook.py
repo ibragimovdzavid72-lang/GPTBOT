@@ -1,3 +1,4 @@
+
 """
 Модуль для работы с Webhook для Telegram бота.
 Поддерживает как polling, так и webhook режимы работы.
@@ -118,11 +119,11 @@ class WebhookManager:
                 logger.error(f"❌ Полная ошибка: {traceback.format_exc()}")
                 return web.Response(status=500)
         
-        # Регистрируем обработчик на корневом пути И на /webhook для совместимости
+        # Регистрируем обработчик только для POST запросов на webhook
         app.router.add_post("/", handle_webhook)
         app.router.add_post("/webhook", handle_webhook)
         
-        # Добавляем health check endpoint
+        # Добавляем health check endpoint только для GET
         async def health_check(request):
             return web.json_response({"status": "ok", "bot": "telegram_ai_agent_v2", "webhook_path": webhook_path})
         
@@ -144,8 +145,9 @@ class WebhookManager:
         # Добавляем middleware для логирования
         app.middlewares.append(log_requests)
         
+        # Регистрируем только GET маршруты для health check
         app.router.add_get("/health", health_check)
-        app.router.add_get("/", health_check)  # GET запросы на корень для health check
+        app.router.add_get("/status", health_check)  # Альтернативный health check
         app.router.add_get("/favicon.ico", favicon_handler)
         app.router.add_head("/favicon.ico", favicon_handler)  # HEAD запросы тоже
         
