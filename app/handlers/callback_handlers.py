@@ -9,7 +9,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from ..utils.message_editor import message_flow
 from ..main import (
-    get_user_language, get_text, is_super_admin, 
+    get_text, is_super_admin, 
     get_main_menu, get_admin_menu
 )
 from ..services.user_service import user_service
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 async def handle_ai_agent_pro(callback_query: types.CallbackQuery) -> None:
     """Обработчик кнопки ⚡ AI Agent-PRO ⚡."""
     try:
-        user_lang = await get_user_language(callback_query.from_user.id)
+        user_lang = await user_service.get_user_language(callback_query.from_user.id)
         await message_flow.show_pro_versions(callback_query, user_lang)
         await callback_query.answer()
         
@@ -32,7 +32,7 @@ async def handle_ai_agent_pro(callback_query: types.CallbackQuery) -> None:
 async def handle_back_to_main(callback_query: types.CallbackQuery) -> None:
     """Обработчик кнопки ⬅️ Назад (возврат в главное меню)."""
     try:
-        user_lang = await get_user_language(callback_query.from_user.id)
+        user_lang = await user_service.get_user_language(callback_query.from_user.id)
         await message_flow.show_main_menu(callback_query, user_lang)
         await callback_query.answer()
         
@@ -44,7 +44,7 @@ async def handle_back_to_main(callback_query: types.CallbackQuery) -> None:
 async def handle_change_language(callback_query: types.CallbackQuery) -> None:
     """Обработчик кнопки смены языка."""
     try:
-        user_lang = await get_user_language(callback_query.from_user.id)
+        user_lang = await user_service.get_user_language(callback_query.from_user.id)
         await message_flow.show_language_menu(callback_query, user_lang)
         await callback_query.answer()
         
@@ -77,7 +77,7 @@ async def handle_set_language(callback_query: types.CallbackQuery, lang_code: st
 async def handle_web_search_menu(callback_query: types.CallbackQuery) -> None:
     """Обработчик меню поиска в интернете."""
     try:
-        user_lang = await get_user_language(callback_query.from_user.id)
+        user_lang = await user_service.get_user_language(callback_query.from_user.id)
         
         search_text = (
             f"🔍 <b>{get_text('web_search', user_lang)}</b>\n\n"
@@ -110,7 +110,7 @@ async def handle_web_search_menu(callback_query: types.CallbackQuery) -> None:
 async def handle_news_search_menu(callback_query: types.CallbackQuery) -> None:
     """Обработчик меню поиска новостей."""
     try:
-        user_lang = await get_user_language(callback_query.from_user.id)
+        user_lang = await user_service.get_user_language(callback_query.from_user.id)
         
         news_text = (
             f"📰 <b>{get_text('search_news', user_lang)}</b>\n\n"
