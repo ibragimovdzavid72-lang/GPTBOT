@@ -1,15 +1,7 @@
-"""
-Services package for business logic.
-"""
+"""Handlers package for the Telegram bot."""
 
-from .search_service import search_service
-from .database_service import database_service
-from .user_service import user_service
-from .ai_service import ai_service
+from .callback_handlers import route_callback
 
 __all__ = [
-    "search_service",
-    "database_service", 
-    "user_service",
-    "ai_service"
+    "route_callback"
 ]
