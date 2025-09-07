@@ -226,7 +226,56 @@ class MessageFlow:
         )
 
     async def show_welcome_screen(self, callback_query: types.CallbackQuery, user_lang: str = "ru"):
-        """Показать современный экран приветствия с кнопкой Старт / Start."""
+        """Показать современный экран приветствия с изображением и кнопками."""
+        try:
+            # Пытаемся отправить изображение приветствия
+            await self.send_welcome_image(callback_query, user_lang)
+        except Exception as e:
+            logger.error(f"Ошибка при отправке изображения приветствия: {e}")
+            # Fallback на текстовое приветствие
+            await self.show_welcome_text(callback_query, user_lang)
+    
+    async def send_welcome_image(self, callback_query: types.CallbackQuery, user_lang: str = "ru"):
+        """Отправить изображение приветствия."""
+        import os
+        
+        # Путь к изображению приветствия
+        image_path = "assets/images/welcome_screen.png"
+        
+        if not os.path.exists(image_path):
+            raise FileNotFoundError("Изображение приветствия не найдено")
+        
+        # Формируем кнопки
+        if user_lang == "en":
+            start_button = "🚀 Start"
+            lang_button = "🇷🇺 Русский"
+            lang_callback = "set_lang_ru"
+        else:
+            start_button = "🚀 Старт"
+            lang_button = "🇺🇸 English"
+            lang_callback = "set_lang_en"
+
+        keyboard = [
+            [InlineKeyboardButton(text=start_button, callback_data="back_to_main")],
+            [InlineKeyboardButton(text=lang_button, callback_data=lang_callback)]
+        ]
+        reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+        
+        # Отправляем изображение
+        with open(image_path, "rb") as photo:
+            await callback_query.message.answer_photo(
+                photo,
+                reply_markup=reply_markup
+            )
+        
+        # Удаляем предыдущее сообщение
+        try:
+            await callback_query.message.delete()
+        except Exception:
+            pass  # Игнорируем ошибки удаления
+    
+    async def show_welcome_text(self, callback_query: types.CallbackQuery, user_lang: str = "ru"):
+        """Показать текстовое приветствие (fallback)."""
         if user_lang == "en":
             title = "<b>⚡ AI Agent ⚡</b>\n"
             features = (
@@ -277,4 +326,4 @@ class MessageFlow:
 
 
 # Глобальный экземпляр для использования в handlers
-message_flow = MessageFlow()
+message_flow = MessageFlow()v
