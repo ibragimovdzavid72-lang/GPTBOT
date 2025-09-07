@@ -886,7 +886,6 @@ async def process_callback(callback_query: types.CallbackQuery) -> None:
                 # Новая кнопка для цепочки перефраза
                 new_key = f"{callback_query.from_user.id}_{hash(new_text)%1000000}"
                 response_cache[new_key] = new_text
-                from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
                 rephrase_label = "🔁 Переформулировать" if user_lang_cb == "ru" else "🔁 Rephrase"
                 kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=rephrase_label, callback_data=f"rephrase_{new_key}")]])
                 await callback_query.message.answer(format_answer(user_lang_cb, new_text), reply_markup=kb, parse_mode="HTML")
@@ -900,7 +899,6 @@ async def process_callback(callback_query: types.CallbackQuery) -> None:
             await callback_query.message.answer("❌ Полный текст недоступен.")
         else:
             user_lang_cb = await get_user_language(callback_query.from_user.id)
-            from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
             rephrase_label = "🔁 Переформулировать" if user_lang_cb == "ru" else "🔁 Rephrase"
             kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=rephrase_label, callback_data=f"rephrase_{key}")]])
             await callback_query.message.answer(format_answer(user_lang_cb, full), reply_markup=kb, parse_mode="HTML")
@@ -919,7 +917,6 @@ async def process_callback(callback_query: types.CallbackQuery) -> None:
                     instruction = "Добавь 2-3 практических примера к тексту." if lang == "ru" else "Add 2-3 practical examples to the text."
                 messages = [{"role": "user", "content": f"{instruction}\n\n{original}"}]
                 edited = await openai_chat_with_history(DEFAULT_SYSTEM_PROMPT, messages, None)
-                from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
                 new_key = f"{callback_query.from_user.id}_{hash(edited)%1000000}"
                 full_response_cache[new_key] = edited
                 response_cache[new_key] = edited
@@ -1854,7 +1851,6 @@ async def process_voice_text_message(callback_query: types.CallbackQuery, text: 
         else:
             # Отправляем текстовый ответ
             user_lang_cb = await get_user_language(callback_query.from_user.id)
-            from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
             # Кешируем полный ответ
             full_key = f"{callback_query.from_user.id}_{hash(response)%1000000}"
             full_response_cache[full_key] = response
@@ -2120,7 +2116,6 @@ async def process_text_message(message) -> None:
             full_key = f"{message.from_user.id}_{hash(response)%1000000}"
             full_response_cache[full_key] = response
             response_cache[full_key] = response
-            from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
             if len(response) > 800:
                 preview = response[:800] + "…"
                 buttons = [
