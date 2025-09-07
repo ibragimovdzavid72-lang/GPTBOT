@@ -29,6 +29,7 @@ from .constants import (
     ERROR_MESSAGES, MAX_TTS_LENGTH
 )
 from .services.search_service import search_service
+from .services.database_service import database_service
 from .suggest import generate_prompt_from_logs
 from .ai import openai_chat, openai_image, openai_vision, openai_tts, openai_stt, openai_chat_with_history, openai_chat_with_personal_context
 from .admin import is_admin, is_super_admin, cmd_admin_stats, cmd_errors, cmd_bot_on, cmd_bot_off, is_bot_active
@@ -301,65 +302,47 @@ admin_commands_menu = InlineKeyboardMarkup(inline_keyboard=[
 # Создание меню настроек
 
 model_selection_menu = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="GPT-4o", callback_data="set_model_gpt-4o")],
-    [InlineKeyboardButton(text="GPT-4 Turbo", callback_data="set_model_gpt-4-turbo")],
-    [InlineKeyboardButton(text="GPT-3.5 Turbo", callback_data="set_model_gpt-3.5-turbo")],
+    [InlineKeyboardButton(text="🚀 GPT-4o Mini (быстрая)", callback_data="set_model_gpt-4o-mini")],
+    [InlineKeyboardButton(text="⚡ GPT-4o (основная)", callback_data="set_model_gpt-4o")],
+    [InlineKeyboardButton(text="🔥 GPT-4 Turbo", callback_data="set_model_gpt-4-turbo")],
+    [InlineKeyboardButton(text="💎 GPT-4 Classic", callback_data="set_model_gpt-4")],
+    [InlineKeyboardButton(text="⚙️ GPT-3.5 Turbo", callback_data="set_model_gpt-3.5-turbo")],
+    [InlineKeyboardButton(text="🌟 GPT-5 (новая)", callback_data="set_model_gpt-5")],
     [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_main")],
 ])
 
 
 async def on_startup() -> None:
     """Функция, вызываемая при запуске бота."""
-    global pool
-    try:
-        pool = await asyncpg.create_pool(settings.DATABASE_URL)
-        logger.info("Подключение к базе данных установлено")
+    # Инициализируем сервисы
+    await database_service.initialize_pool()
+    
+    if database_service.is_available():
+        logger.info("✅ База данных подключена успешно")
         
-        # Применение схемы базы данных
-        async with pool.acquire() as conn:
-            try:
-                # Проверяем существование таблиц
-                tables_exist = await conn.fetchval("""
-                    SELECT EXISTS (
-                        SELECT FROM information_schema.tables 
-                        WHERE table_name IN ('logs', 'bot_config', 'bot_status')
-                    )
-                """)
-                
-                # Читаем и выполняем schema.sql
-                with open("schema.sql", "r", encoding="utf-8") as f:
-                    schema_sql = f.read()
-                    # Разделяем SQL команды по точке с запятой
-                    commands = schema_sql.split(";")
-                    for command in commands:
-                        command = command.strip()
-                        if command:
-                            try:
-                                await conn.execute(command)
-                            except Exception as e:
-                                logger.warning(f"Не удалось выполнить команду: {command[:50]}... Ошибка: {e}")
-                
-                if not tables_exist:
-                    logger.info("Схема базы данных успешно применена")
-                else:
-                    logger.info("Таблицы уже существуют в базе данных")
-            except Exception as e:
-                logger.error(f"Ошибка при проверке или создании таблиц: {e}")
-                # Продолжаем работу даже если не удалось создать таблицы
-                logger.warning("Продолжаем работу бота без таблиц БД")
-    except Exception as e:
-        pool = None
-        logger.error(f"Не удалось подключиться к базе данных: {e}")
-        # Продолжаем работу даже если нет подключения к БД
-        logger.warning("Продолжаем работу бота без подключения к БД")
+        # Применяем схему базы данных
+        try:
+            with open("schema.sql", "r", encoding="utf-8") as f:
+                schema_sql = f.read()
+                commands = schema_sql.split(";")
+                for command in commands:
+                    command = command.strip()
+                    if command:
+                        try:
+                            await database_service.execute_query(command)
+                        except Exception as e:
+                            logger.warning(f"Не удалось выполнить команду: {command[:50]}... Ошибка: {e}")
+            logger.info("✅ Схема базы данных применена")
+        except Exception as e:
+            logger.error(f"❌ Ошибка при применении схемы БД: {e}")
+    else:
+        logger.warning("⚠️ База данных недоступна, продолжаем без неё")
 
 
 async def on_shutdown() -> None:
     """Функция, вызываемая при остановке бота."""
-    global pool
-    if pool:
-        await pool.close()
-        logger.info("Подключение к базе данных закрыто")
+    await database_service.close_pool()
+    logger.info("✅ Сервисы остановлены")
 
 
 @dp.message(Command("start"))
@@ -368,14 +351,43 @@ async def cmd_start(message: types.Message) -> None:
     # Получаем предпочитаемый язык пользователя
     user_lang = await get_user_language(message.from_user.id)
     
-    # Формируем модерное приветствие без персонализации
-    welcome_text = get_text("welcome", user_lang)
+    try:
+        # Пытаемся отправить изображение приветствия
+        await send_welcome_image_start(message, user_lang)
+    except Exception as e:
+        logger.error(f"Ошибка при отправке изображения приветствия: {e}")
+        # Fallback на текстовое приветствие
+        welcome_text = get_text("welcome", user_lang)
+        
+        # Показываем расширенное меню для супер-администратора, обычное для остальных
+        if is_super_admin(message.from_user.id):
+            await message.answer(welcome_text, reply_markup=get_admin_menu(user_lang))
+        else:
+            await message.answer(welcome_text, reply_markup=get_main_menu(user_lang))
+
+
+async def send_welcome_image_start(message: types.Message, user_lang: str = "ru"):
+    """Отправить изображение приветствия для команды /start."""
+    import os
     
-    # Показываем расширенное меню для супер-администратора, обычное для остальных
+    # Путь к изображению приветствия
+    image_path = "assets/images/welcome_screen.png"
+    
+    if not os.path.exists(image_path):
+        raise FileNotFoundError("Изображение приветствия не найдено")
+    
+    # Формируем кнопки в зависимости от роли пользователя
     if is_super_admin(message.from_user.id):
-        await message.answer(welcome_text, reply_markup=get_admin_menu(user_lang))
+        reply_markup = get_admin_menu(user_lang)
     else:
-        await message.answer(welcome_text, reply_markup=get_main_menu(user_lang))
+        reply_markup = get_main_menu(user_lang)
+    
+    # Отправляем изображение
+    with open(image_path, "rb") as photo:
+        await message.answer_photo(
+            photo,
+            reply_markup=reply_markup
+        )
 
 
 # ============================================================================
@@ -1393,42 +1405,25 @@ async def handle_voice_message(message: types.Message) -> None:
 
 async def set_user_language(message: types.Message, user_id: int, language: str) -> None:
     """Устанавливает предпочитаемый язык интерфейса для пользователя."""
-    global pool
-    
-    if not pool:
+    if not database_service.is_available():
         await message.answer("❌ База данных недоступна. Настройки не могут быть сохранены.")
         return
     
     try:
-        async with pool.acquire() as conn:
-            # Проверяем, нет ли колонки language, если нет - добавляем
-            try:
-                await conn.execute(
-                    "ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS language TEXT DEFAULT 'ru'"
-                )
-            except Exception as e:
-                logger.debug(f"Колонка language уже существует или ошибка: {e}")
-            
-            # Проверяем, есть ли уже настройки пользователя
-            existing = await conn.fetchrow(
-                "SELECT user_id FROM user_settings WHERE user_id = $1",
-                user_id
-            )
-            
-            if existing:
-                # Обновляем существующие настройки
-                await conn.execute(
-                    "UPDATE user_settings SET language = $1, updated_at = now() WHERE user_id = $2",
-                    language, user_id
-                )
-            else:
-                # Создаем новые настройки с всеми полями по умолчанию
-                await conn.execute(
-                    "INSERT INTO user_settings (user_id, language, preferred_model, tts_enabled, tts_voice, personal_assistant_enabled) VALUES ($1, $2, $3, $4, $5, $6)",
-                    user_id, language, "gpt-4o", False, "alloy", False
-                )
+        # Получаем текущие настройки
+        current_settings = await database_service.get_user_settings(user_id) or {}
         
-        logger.info(f"Пользователь {user_id} изменил язык на {language}")
+        # Обновляем язык
+        current_settings["language"] = language
+        
+        # Сохраняем настройки
+        success = await database_service.save_user_settings(user_id, current_settings)
+        
+        if success:
+            logger.info(f"Пользователь {user_id} изменил язык на {language}")
+        else:
+            await message.answer("❌ Произошла ошибка при сохранении настроек.")
+            
     except Exception as e:
         logger.error(f"Ошибка при сохранении языка пользователя: {e}")
         await message.answer("❌ Произошла ошибка при сохранении настроек. Попробуйте позже.")
@@ -1436,24 +1431,13 @@ async def set_user_language(message: types.Message, user_id: int, language: str)
 
 async def get_user_language(user_id: int) -> str:
     """Получает предпочитаемый язык пользователя."""
-    global pool
-    
-    if not pool:
+    if not database_service.is_available():
         return "ru"  # Язык по умолчанию
     
     try:
-        async with pool.acquire() as conn:
-            # Проверяем, существует ли колонка language
-            try:
-                row = await conn.fetchrow(
-                    "SELECT language FROM user_settings WHERE user_id = $1",
-                    user_id
-                )
-                if row and row["language"]:
-                    return row["language"]
-            except Exception:
-                # Колонка language еще не существует
-                pass
+        settings = await database_service.get_user_settings(user_id)
+        if settings and settings.get("language"):
+            return settings["language"]
     except Exception as e:
         logger.error(f"Ошибка при получении языка пользователя: {e}")
     
@@ -1462,34 +1446,25 @@ async def get_user_language(user_id: int) -> str:
 
 async def set_user_model(message: types.Message, model: str) -> None:
     """Устанавливает предпочитаемую модель ИИ для пользователя."""
-    global pool
-    
-    if not pool:
+    if not database_service.is_available():
         await message.answer("❌ База данных недоступна. Настройки не могут быть сохранены.")
         return
     
     try:
-        async with pool.acquire() as conn:
-            # Проверяем, есть ли уже настройки пользователя
-            existing = await conn.fetchrow(
-                "SELECT user_id FROM user_settings WHERE user_id = $1",
-                message.from_user.id
-            )
-            
-            if existing:
-                # Обновляем существующие настройки
-                await conn.execute(
-                    "UPDATE user_settings SET preferred_model = $1, updated_at = now() WHERE user_id = $2",
-                    model, message.from_user.id
-                )
-            else:
-                # Создаем новые настройки с всеми полями по умолчанию
-                await conn.execute(
-                    "INSERT INTO user_settings (user_id, preferred_model, tts_enabled, tts_voice, language) VALUES ($1, $2, $3, $4, $5)",
-                    message.from_user.id, model, False, "alloy", "ru"
-                )
+        # Получаем текущие настройки
+        current_settings = await database_service.get_user_settings(message.from_user.id) or {}
         
-        logger.info(f"Пользователь {message.from_user.id} изменил модель на {model}")
+        # Обновляем модель
+        current_settings["preferred_model"] = model
+        
+        # Сохраняем настройки
+        success = await database_service.save_user_settings(message.from_user.id, current_settings)
+        
+        if success:
+            logger.info(f"Пользователь {message.from_user.id} изменил модель на {model}")
+        else:
+            await message.answer("❌ Произошла ошибка при сохранении настроек.")
+            
     except Exception as e:
         logger.error(f"Ошибка при сохранении модели пользователя: {e}")
         await message.answer("❌ Произошла ошибка при сохранении настроек. Попробуйте позже.")
@@ -1611,10 +1586,8 @@ async def set_tts_voice(message: types.Message, voice: str) -> None:
 
 async def handle_image_message(message: types.Message) -> None:
     """Обработчик сообщений с изображениями."""
-    global pool
-    
     # Проверяем, активен ли бот
-    if not await is_bot_active(pool):
+    if not await is_bot_active(database_service.pool):
         await message.answer("⛔ Бот временно отключён администратором.")
         return
     
@@ -1657,25 +1630,21 @@ async def handle_image_message(message: types.Message) -> None:
         await message.answer(response)
         
         # Записываем взаимодействие в базу
-        if pool:
+        if database_service.is_available():
             try:
-                async with pool.acquire() as conn:
-                    await conn.execute(
-                        "INSERT INTO logs (username, command, args, answer) VALUES ($1, $2, $3, $4)",
-                        message.from_user.username,
-                        "vision",
-                        caption,
-                        response,
-                    )
-                    # Сохраняем в истории диалога
-                    await conn.execute(
-                        "INSERT INTO dialog_history (user_id, role, content) VALUES ($1, $2, $3)",
-                        message.from_user.id, "user", f"[Изображение] {caption}"
-                    )
-                    await conn.execute(
-                        "INSERT INTO dialog_history (user_id, role, content) VALUES ($1, $2, $3)",
-                        message.from_user.id, "assistant", response
-                    )
+                await database_service.log_command(
+                    message.from_user.username or str(message.from_user.id),
+                    "vision",
+                    caption,
+                    response
+                )
+                # Сохраняем в истории диалога
+                await database_service.save_dialog_message(
+                    message.from_user.id, "user", f"[Изображение] {caption}"
+                )
+                await database_service.save_dialog_message(
+                    message.from_user.id, "assistant", response
+                )
             except Exception as e:
                 logger.error(f"Ошибка при записи в базу данных: {e}")
         else:
